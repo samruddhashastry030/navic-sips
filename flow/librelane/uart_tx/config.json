@@ -1,0 +1,8 @@
+{
+    "DESIGN_NAME": "uart_tx",
+    "VERILOG_FILES": ["dir::../../../rtl/uart_tx.sv"],
+    "CLOCK_PORT": "clk_i",
+    "CLOCK_PERIOD": 10,
+    "PDK": "sky130A",
+    "FP_CORE_UTIL": 40
+}
