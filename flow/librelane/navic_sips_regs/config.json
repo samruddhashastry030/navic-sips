@@ -1,0 +1,13 @@
+{
+    "DESIGN_NAME": "navic_sips_regs",
+    "VERILOG_FILES": [
+        "dir::../../../rtl/navic_sips_regs.sv"
+    ],
+    "CLOCK_PORT": "clk_i",
+    "CLOCK_PERIOD": 10,
+    "PDK": "sky130A",
+    "FP_CORE_UTIL": 40,
+    "PNR_SDC_FILE": "dir::base.sdc",
+    "SIGNOFF_SDC_FILE": "dir::base.sdc",
+    "MAX_FANOUT_CONSTRAINT": 6
+}
