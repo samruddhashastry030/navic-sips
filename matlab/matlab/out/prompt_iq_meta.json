@@ -1,0 +1,14 @@
+{
+  "PRNID": 3,
+  "SampleRate_Hz": 1.023E+7,
+  "IntegrationTime_s": 0.001,
+  "PromptRate_Hz": 1000,
+  "CNo_dBHz": 45,
+  "ScintEnable": true,
+  "ScintRmsPhase_rad": 0.5,
+  "PLLNoiseBandwidth_Hz": 18,
+  "nPromptSamples": 800,
+  "S4": 0.65501008824483364,
+  "sigma_phi_rad": 0.10970264118604547,
+  "note": "Prompt I/Q from gnssSignalTracker first output. Post-correlation, not raw front-end."
+}
