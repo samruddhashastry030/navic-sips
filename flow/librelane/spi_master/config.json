@@ -1,0 +1,10 @@
+{
+    "DESIGN_NAME": "spi_master",
+    "VERILOG_FILES": ["dir::../../../rtl/spi_master.sv"],
+    "CLOCK_PORT": "clk_i",
+    "CLOCK_PERIOD": 10,
+    "PDK": "sky130A",
+    "FP_CORE_UTIL": 40,
+    "PNR_SDC_FILE": "dir::base.sdc",
+    "SIGNOFF_SDC_FILE": "dir::base.sdc"
+}
