@@ -39,7 +39,7 @@ cfg.CNo             = 45;           % dB-Hz
 
 % Scintillation. Set ScintEnable = false for a clean NOMINAL reference.
 cfg.ScintEnable    = true;
-cfg.ScintRmsPhase  = 0.5;           % rad; ~1.0 gives S4 around 0.6
+cfg.ScintRmsPhase  = 1.0;           % rad; ~1.0 gives S4 around 0.6
 
 % Tracking loop settings. THESE ARE THE PARAMETERS NavIC-SIPS RECOMMENDS
 % ADJUSTING — rerunning with different PLLNoiseBandwidth and counting
@@ -83,10 +83,10 @@ else
 end
 
 % thermal noise at the requested C/No
-%sigPower   = mean(abs(rxWaveform).^2);
-%noisePower = sigPower / (10^(cfg.CNo/10) / cfg.SampleRate);
-%rxWaveform = rxWaveform + sqrt(noisePower/2) * ...
-             % (randn(size(rxWaveform)) + 1j*randn(size(rxWaveform)));
+sigPower   = mean(abs(rxWaveform).^2);
+noisePower = sigPower / (10^(cfg.CNo/10) / cfg.SampleRate);
+rxWaveform = rxWaveform + sqrt(noisePower/2) * ...
+             (randn(size(rxWaveform)) + 1j*randn(size(rxWaveform)));
 
 %% ---- 2. acquisition -------------------------------------------------------
 fprintf('  acquiring...\n');
@@ -146,8 +146,8 @@ fprintf('    %d prompt samples at %.0f Hz\n', nPrompt, promptRate);
 intensity = iPrompt.^2 + qPrompt.^2;
 meanI = mean(intensity);
 S4    = sqrt(max(mean(intensity.^2)/(meanI^2) - 1, 0));
-integWaveNoData = integWave(:).^2;  
-phase = unwrap(angle(integWave(:).^2)) / 2;
+
+phase = unwrap(atan2(qPrompt, iPrompt));
 idx   = (1:nPrompt)';
 p     = polyfit(idx, phase, 1);
 detrendedPhase = phase - polyval(p, idx);

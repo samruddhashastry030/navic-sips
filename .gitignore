@@ -10,3 +10,6 @@ obj_dir/
 runs/
 *.log
 flow/**/runs/
+resources/datasets/*
+resources/datasets/*
+matlab/*.mat
