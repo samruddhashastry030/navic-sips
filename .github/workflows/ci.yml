@@ -14,6 +14,14 @@ jobs:
           sudo apt-get install -y iverilog verilator build-essential
           pip install cocotb
       - name: Lint
-        run: verilator --lint-only -Wall rtl/*.sv
+        run: for f in rtl/*.sv; do verilator --lint-only -Wall "$f" || exit 1; done
       - name: Simulate
         run: make -C tb/cocotb SIM=icarus
+      - name: Simulate plain-Verilog TBs
+        run: |
+          iverilog -g2012 -o /tmp/regs.vvp rtl/navic_sips_regs.sv tb/tb_navic_sips_regs.sv
+          vvp /tmp/regs.vvp | tee /tmp/regs.log
+          grep -q "^PASS" /tmp/regs.log
+          iverilog -g2012 -o /tmp/spi.vvp rtl/spi_master.sv tb/tb_spi_master.sv
+          vvp /tmp/spi.vvp | tee /tmp/spi.log
+          grep -q "^PASS" /tmp/spi.log

@@ -133,7 +133,7 @@ module spi_master #(
               sclk_o <= 1'b0;
               phase  <= 1'b0;
 
-              if (bit_cnt == DATA_WIDTH-1) begin
+              if (bit_cnt == CNT_W'(DATA_WIDTH-1)) begin
                 state <= ST_TAIL;
               end else begin
                 tx_shift <= {tx_shift[DATA_WIDTH-2:0], 1'b0};
