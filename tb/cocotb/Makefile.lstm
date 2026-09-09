@@ -1,0 +1,54 @@
+# cocotb testbench for lstm_accel
+#
+#   make -f Makefile.lstm                 run with Icarus Verilog (default)
+#   make -f Makefile.lstm SIM=verilator
+#   make -f Makefile.lstm LSTM_TB_VECTORS=32    check more golden vectors
+#   make -f Makefile.lstm clean-all       full rebuild
+#
+# The RTL loads its gate LUTs with $readmemh at elaboration time, and the
+# simulator runs from this directory rather than the repo root, so the two
+# hex files are copied in here and the module's path parameters overridden
+# to bare filenames.
+
+SIM           ?= icarus
+TOPLEVEL_LANG ?= verilog
+
+RTL_DIR := $(abspath $(CURDIR)/../../rtl)
+W_DIR   := $(RTL_DIR)/weights
+
+VERILOG_SOURCES     := $(RTL_DIR)/lstm_accel.sv
+TOPLEVEL            := lstm_accel
+COCOTB_TEST_MODULES := test_lstm_accel
+
+# How many golden vectors the test checks. Each is ~80k cycles, so start
+# small and raise it once the block passes.
+export LSTM_TB_VECTORS ?= 4
+
+ifeq ($(SIM),verilator)
+    EXTRA_ARGS   += --trace --trace-structs --assert -Wall -Wno-fatal
+    EXTRA_ARGS   += -GLUT_SIG=\"lut_sigmoid.hex\" -GLUT_TANH=\"lut_tanh.hex\"
+endif
+ifeq ($(SIM),icarus)
+    COMPILE_ARGS += -g2012
+    COMPILE_ARGS += -Plstm_accel.LUT_SIG=\"lut_sigmoid.hex\"
+    COMPILE_ARGS += -Plstm_accel.LUT_TANH=\"lut_tanh.hex\"
+endif
+
+# Copy the LUTs next to the simulation so $readmemh finds them.
+$(CURDIR)/lut_sigmoid.hex: $(W_DIR)/lut_sigmoid.hex
+	cp $< $@
+$(CURDIR)/lut_tanh.hex: $(W_DIR)/lut_tanh.hex
+	cp $< $@
+
+luts: $(CURDIR)/lut_sigmoid.hex $(CURDIR)/lut_tanh.hex
+
+# cocotb's sim target must not run before the LUTs are in place.
+sim: luts
+
+include $(shell cocotb-config --makefiles)/Makefile.sim
+
+clean-all:
+	rm -rf sim_build results.xml dump.vcd __pycache__ \
+	       lut_sigmoid.hex lut_tanh.hex
+
+.PHONY: luts clean-all

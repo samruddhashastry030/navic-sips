@@ -273,8 +273,12 @@ def from_dataset(path, seed=0, out_json=None):
         sphi[:, -1] - sphi[:, 0],
     ])
 
-    # phase_screen.py generates one sample per event
-    event_ids = np.arange(len(y))
+    # phase_screen.py generates one sample per event; cosmic2_dataset.py
+    # emits many overlapping windows per occultation and stores event_ids.
+    if "event_ids" in d:
+        event_ids = d["event_ids"]
+    else:
+        event_ids = np.arange(len(y))
 
     print("loaded %s: %d samples, %d features" % (path, len(y), X.shape[1]))
     return run_baselines(X, y, event_ids, seed=seed, out_json=out_json)

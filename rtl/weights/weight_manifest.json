@@ -1,0 +1,108 @@
+{
+  "model": "sim/lstm_sweep/lstm_h8_l2.pt",
+  "hidden": 8,
+  "layers": 2,
+  "frac_bits": 8,
+  "threshold": 0.5100000000000001,
+  "mu": [
+    0.034527312964200974,
+    0.06827320903539658
+  ],
+  "sd": [
+    0.7882897853851318,
+    0.316927969455719
+  ],
+  "header_slots": 5,
+  "weight_slots": 987,
+  "total_slots": 992,
+  "sram_slots": 1024,
+  "lut_entries": 256,
+  "lut_range": 8.0,
+  "tensors": [
+    {
+      "name": "lstm.weight_ih_l0",
+      "shape": [
+        32,
+        2
+      ],
+      "start": 0,
+      "count": 64
+    },
+    {
+      "name": "lstm.weight_hh_l0",
+      "shape": [
+        32,
+        8
+      ],
+      "start": 64,
+      "count": 256
+    },
+    {
+      "name": "lstm.bias_ih_l0",
+      "shape": [
+        32
+      ],
+      "start": 320,
+      "count": 32
+    },
+    {
+      "name": "lstm.bias_hh_l0",
+      "shape": [
+        32
+      ],
+      "start": 352,
+      "count": 32
+    },
+    {
+      "name": "lstm.weight_ih_l1",
+      "shape": [
+        32,
+        8
+      ],
+      "start": 384,
+      "count": 256
+    },
+    {
+      "name": "lstm.weight_hh_l1",
+      "shape": [
+        32,
+        8
+      ],
+      "start": 640,
+      "count": 256
+    },
+    {
+      "name": "lstm.bias_ih_l1",
+      "shape": [
+        32
+      ],
+      "start": 896,
+      "count": 32
+    },
+    {
+      "name": "lstm.bias_hh_l1",
+      "shape": [
+        32
+      ],
+      "start": 928,
+      "count": 32
+    },
+    {
+      "name": "head.weight",
+      "shape": [
+        3,
+        8
+      ],
+      "start": 960,
+      "count": 24
+    },
+    {
+      "name": "head.bias",
+      "shape": [
+        3
+      ],
+      "start": 984,
+      "count": 3
+    }
+  ]
+}
