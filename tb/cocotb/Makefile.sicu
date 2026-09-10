@@ -1,0 +1,30 @@
+# cocotb testbench for sicu
+#
+#   make -f Makefile.sicu sim
+#   make -f Makefile.sicu sim SICU_TB_VECTORS=32
+#   make -f Makefile.sicu clean-all
+
+SIM           ?= icarus
+TOPLEVEL_LANG ?= verilog
+
+RTL_DIR := $(abspath $(CURDIR)/../../rtl)
+
+VERILOG_SOURCES     := $(RTL_DIR)/sicu.sv
+TOPLEVEL            := sicu
+COCOTB_TEST_MODULES := test_sicu
+
+export SICU_TB_VECTORS ?= 8
+
+ifeq ($(SIM),verilator)
+    EXTRA_ARGS += --trace --trace-structs --assert -Wall -Wno-fatal
+endif
+ifeq ($(SIM),icarus)
+    COMPILE_ARGS += -g2012
+endif
+
+include $(shell cocotb-config --makefiles)/Makefile.sim
+
+clean-all:
+	rm -rf sim_build results.xml dump.vcd __pycache__
+
+.PHONY: clean-all
