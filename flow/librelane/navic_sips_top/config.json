@@ -1,0 +1,79 @@
+{
+    "DESIGN_NAME": "navic_sips_top",
+    "VERILOG_FILES": [
+        "dir::../../../rtl/navic_sips_top.sv",
+        "dir::../../../rtl/navic_sips_regs.sv",
+        "dir::../../../rtl/spi_master.sv"
+    ],
+    "CLOCK_PORT": "clk_i",
+    "CLOCK_PERIOD": 10,
+    "PDK": "sky130A",
+    "FP_SIZING": "absolute",
+    "DIE_AREA": [
+        0,
+        0,
+        1800,
+        1100
+    ],
+    "PL_TARGET_DENSITY_PCT": 35,
+    "MACROS": {
+        "sky130_sram_2kbyte_1rw1r_32x512_8": {
+            "gds": [
+                "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/gds/sky130_sram_2kbyte_1rw1r_32x512_8.gds"
+            ],
+            "lef": [
+                "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/lef/sky130_sram_2kbyte_1rw1r_32x512_8.lef"
+            ],
+            "nl": [
+                "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/verilog/sky130_sram_2kbyte_1rw1r_32x512_8.v"
+            ],
+            "lib": {
+                "*": [
+                    "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/lib/sky130_sram_2kbyte_1rw1r_32x512_8_TT_1p8V_25C.lib"
+                ]
+            },
+            "instances": {
+                "u_weight_sram": {
+                    "location": [
+                        120,
+                        320
+                    ],
+                    "orientation": "N"
+                }
+            }
+        },
+        "sky130_sram_1kbyte_1rw1r_32x256_8": {
+            "gds": [
+                "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/gds/sky130_sram_1kbyte_1rw1r_32x256_8.gds"
+            ],
+            "lef": [
+                "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/lef/sky130_sram_1kbyte_1rw1r_32x256_8.lef"
+            ],
+            "nl": [
+                "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/verilog/sky130_sram_1kbyte_1rw1r_32x256_8.v"
+            ],
+            "lib": {
+                "*": [
+                    "/home/samruddha730/.ciel/ciel/sky130/versions/8afc8346a57fe1ab7934ba5a6056ea8b43078e71/sky130A/libs.ref/sky130_sram_macros/lib/sky130_sram_1kbyte_1rw1r_32x256_8_TT_1p8V_25C.lib"
+                ]
+            },
+            "instances": {
+                "u_event_sram": {
+                    "location": [
+                        960,
+                        320
+                    ],
+                    "orientation": "N"
+                }
+            }
+        }
+    },
+    "PNR_SDC_FILE": "dir::base.sdc",
+    "SIGNOFF_SDC_FILE": "dir::base.sdc",
+    "PDN_MACRO_CONNECTIONS": [
+        "u_.*_sram VPWR VGND vccd1 vssd1"
+    ],
+    "MAGIC_GDS_FLATGLOB": [
+        "sky130_sram_*"
+    ]
+}

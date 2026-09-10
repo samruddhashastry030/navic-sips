@@ -13,3 +13,9 @@ flow/**/runs/
 resources/datasets/*
 resources/datasets/*
 matlab/*.mat
+sim/
+tb/cocotb/lut_*.hex
+tb/cocotb/sim_build*/
+tb/cocotb/results.xml
+tb/cocotb/dump.vcd
+flow/librelane/*/runs/
