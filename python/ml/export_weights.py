@@ -180,8 +180,13 @@ def main():
     vals, manifest = flatten_weights(ck["state_dict"], layers)
     n_w = len(vals)
 
-    # Header: mu[2], sd[2], threshold -> 5 slots, then the weights.
-    header = np.concatenate([mu, sd, [thr]])
+    # Header: mu[2], 1/sd[2], threshold -> 5 slots, then the weights.
+    # The RECIPROCAL of sd is stored, not sd itself, so the firmware
+    # normalises with a multiply rather than a divide. PicoRV32 has no
+    # divider, and a software divide once per feature per 10 s window is
+    # avoidable work.
+    inv_sd = 1.0 / sd
+    header = np.concatenate([mu, inv_sd, [thr]])
     slots = np.concatenate([to_q88(header), to_q88(vals)])
     used = len(slots)
 
@@ -228,7 +233,7 @@ def main():
     with open(os.path.join(args.out, "weight_manifest.json"), "w") as f:
         json.dump(dict(model=args.model, hidden=hidden, layers=layers,
                        frac_bits=FRAC_BITS, threshold=thr,
-                       mu=mu.tolist(), sd=sd.tolist(),
+                       mu=mu.tolist(), sd=sd.tolist(), inv_sd=(1.0/sd).tolist(),
                        header_slots=len(header), weight_slots=int(n_w),
                        total_slots=int(used), sram_slots=SRAM_SLOTS,
                        lut_entries=LUT_ENTRIES, lut_range=LUT_RANGE,
@@ -248,7 +253,7 @@ def main():
         f.write("## SRAM map (512 x 32 = %d slots)\n\n" % SRAM_SLOTS)
         f.write("| slot | contents |\n|---|---|\n")
         f.write("| 0-1 | normalisation mean, feature 0 and 1 |\n")
-        f.write("| 2-3 | normalisation std dev, feature 0 and 1 |\n")
+        f.write("| 2-3 | RECIPROCAL of normalisation std dev, feature 0 and 1 |\n")
         f.write("| 4 | SEVERE decision threshold |\n")
         for m in manifest:
             f.write("| %d-%d | %s %s |\n"

@@ -13,7 +13,7 @@ Two values per 32-bit SRAM word: even slot index in bits [15:0], odd in bits [31
 | slot | contents |
 |---|---|
 | 0-1 | normalisation mean, feature 0 and 1 |
-| 2-3 | normalisation std dev, feature 0 and 1 |
+| 2-3 | RECIPROCAL of normalisation std dev, feature 0 and 1 |
 | 4 | SEVERE decision threshold |
 | 5-68 | lstm.weight_ih_l0 32x2 |
 | 69-324 | lstm.weight_hh_l0 32x8 |
