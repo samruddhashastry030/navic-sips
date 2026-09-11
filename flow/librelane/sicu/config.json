@@ -2,7 +2,7 @@
     "DESIGN_NAME": "sicu",
     "VERILOG_FILES": ["dir::../../../rtl/sicu.sv"],
     "CLOCK_PORT": "clk_i",
-    "CLOCK_PERIOD": 20,
+    "CLOCK_PERIOD": 30,
     "PDK": "sky130A",
     "FP_CORE_UTIL": 40,
     "PNR_SDC_FILE": "dir::base.sdc",
