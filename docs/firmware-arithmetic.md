@@ -107,24 +107,34 @@ The accelerator emits raw logits and a plain argmax. The threshold applies
 to the softmax probability of the SEVERE class, which the firmware would
 have to compute — an exponential per class, which PicoRV32 would do slowly.
 
-**Cheaper equivalent.** Comparing `P(SEVERE) >= t` is the same as comparing
-`logit_severe - logsumexp(logits) >= log(t)`. For a three-class problem with
-a threshold near 0.5, an adequate approximation is
+**Cheaper equivalent, measured.** `python/ml/derive_margin.py` swept a
+logit-margin rule against the tuned softmax threshold on the validation
+split. The best margin is **0.25**, which agrees with the tuned rule on
+99.92% of samples.
+
+On the test split: softmax threshold 0.5913, logit margin 0.5820, plain
+argmax 0.5715. So the margin rule costs 0.0093 and recovers half the gap
+for a subtraction and a comparison.
 
 ```c
-    int is_severe = (l2 >= l0) && (l2 >= l1) && (l2 - second_highest >= margin);
+/* margin 0.25 in Q8.8 = 64 = 0x0040 */
+#define SEVERE_MARGIN_Q88  64
+
+int is_severe(int16_t l0, int16_t l1, int16_t l2)
+{
+    int16_t runner_up = (l0 > l1) ? l0 : l1;
+    return (l2 - runner_up) >= SEVERE_MARGIN_Q88;
+}
 ```
 
-where `margin` is precomputed offline to reproduce the tuned threshold's
-behaviour on the validation set. **This needs deriving and checking against
-`sim/lstm_l1only/` before it is trusted** — it is an approximation, not an
-identity, and the tuned threshold was worth 0.02 F1.
+DECISION: use the margin rule. Its 0.0093 cost is smaller than the 0.021
+already accepted by dropping the L2 feature and the 0.016 accepted by
+choosing h8 over h16 to fit the weight SRAM. Plain argmax remains the
+fallback at 0.0198 if the subtraction ever proves awkward.
 
-Until that is done, the plain argmax is the safe default: it scores 0.572
-against the tuned 0.591, so the cost of not implementing the threshold is
-0.019 F1.
-
----
+Note the margin is specific to the trained model. Retraining means
+re-running `derive_margin.py`, exactly as it means regenerating the weight
+image.
 
 ## 4. Loop settings table
 
