@@ -1,0 +1,15 @@
+{
+    "DESIGN_NAME": "picorv32",
+    "VERILOG_FILES": ["dir::../../../rtl/third_party/picorv32.v"],
+    "CLOCK_PORT": "clk",
+    "CLOCK_PERIOD": 30,
+    "PDK": "sky130A",
+    "FP_CORE_UTIL": 40,
+    "SYNTH_PARAMETERS": [
+        "ENABLE_MUL=1'b0", "ENABLE_DIV=1'b0",
+        "COMPRESSED_ISA=1'b0", "ENABLE_IRQ=1'b1",
+        "ENABLE_COUNTERS64=1'b0"
+    ],
+    "PNR_SDC_FILE": "dir::base.sdc",
+    "SIGNOFF_SDC_FILE": "dir::base.sdc"
+}

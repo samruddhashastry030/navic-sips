@@ -9,7 +9,8 @@
 | LSTM accel (seq) | TBD            |            | RTL verified, not hardened |
 | systolic array   | TBD            |            | pending Tracks B/C |
 | CORDIC           | TBD            |            | pending |
-| PicoRV32         | TBD            |            | pending |
+| PicoRV32 RV32I   | 267,943        | 0.009      | hardened, 30 ns |
+| PicoRV32 RV32IMC | 348,532        | 0.012      | hardened, 30 ns — shipping |
 | weight SRAM 2 KB | 284,540        |            | fixed (PDK macro) |
 | event SRAM 1 KB  | 190,712        |            | fixed (PDK macro) |
 
@@ -30,3 +31,17 @@ but pipelining the divider would recover 100 MHz if wanted.
 
 Power figures come from the flow's estimate at each block's own clock, so
 they are not directly comparable across rows.
+
+## CPU ISA extension cost
+
+M and C cost 80,589 um2 (+30%) and 4,532 cells over plain RV32I. The
+firmware uses the multiplier twice per 10 s window and never divides, so the
+extensions serve almost nothing -- which is what an accelerator-centric SoC
+looks like when the work has been moved out of the CPU by design. RV32IMC
+ships because it is in the proposal.
+
+## Running total
+
+Logic: ~565,000 um2 across five hardened blocks (PicoRV32 RV32IMC, SICU,
+regs, SPI, UART). Macros: 475,251 um2. Total ~1,040,000 um2 against a
+1,980,000 um2 die -- 53% before the LSTM accelerator is added.
