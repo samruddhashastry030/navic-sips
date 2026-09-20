@@ -168,7 +168,9 @@ module lstm_accel #(
       xc = 32'(x);
       if (xc >  2048) xc =  2048;
       if (xc < -2048) xc = -2048;
-      num = ((xc + 2048) * 255 + 2048) >>> 12;
+      // x*255 == (x<<8) - x, so no multiplier is needed here. Yosys
+      // inferred two $mul cells for this function alone.
+      num = ((((xc + 2048) <<< 8) - (xc + 2048)) + 2048) >>> 12;
       if (num > 255) num = 255;
       if (num < 0)   num = 0;
       lut_index = num[7:0];
