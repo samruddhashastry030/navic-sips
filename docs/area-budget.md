@@ -6,7 +6,7 @@
 | navic_sips_regs  | 24,921         | 0.002      | done   |
 | spi_master       | 7,981          | 0.45       | done   |
 | SICU             | 177,705        | 0.005      | done, 30 ns |
-| LSTM accel (seq) | TBD            |            | RTL verified, not hardened |
+| LSTM accel (seq) | 202,719        | 0.007      | hardened, 30 ns, shared multiplier |
 | systolic array   | TBD            |            | pending Tracks B/C |
 | CORDIC           | TBD            |            | pending |
 | PicoRV32 RV32I   | 267,943        | 0.009      | hardened, 30 ns |

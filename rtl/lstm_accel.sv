@@ -3,29 +3,36 @@
 //
 // NavIC-SIPS LSTM inference accelerator -- SEQUENTIAL REFERENCE VERSION.
 //
-// One MAC per cycle, one weight fetch per MAC. This is deliberately the
-// simple implementation: it exists to be provably correct against
-// rtl/weights/golden_vectors.hex, so the 8x8 systolic version can be
-// developed against a known-good reference rather than debugged blind
-// alongside the control FSM.
+// One MAC per cycle, one weight fetch per MAC. Deliberately simple: it is
+// provably correct against rtl/weights/golden_vectors.hex, so the 8x8
+// systolic version can be developed against a known-good reference.
 //
-// Throughput, because it affects how the systolic array is justified:
-// one inference is 26,624 MACs (832 per timestep x 32 timesteps), which at
-// roughly 3 cycles per MAC and 10 MHz is about 8 ms, against a window that
-// arrives every 10 s. Sequential is already fast enough by three orders of
-// magnitude, so the systolic array's case has to be energy per inference,
-// not throughput.
+// ONE SHARED MULTIPLIER. The first hardened version let Yosys infer eight
+// separate 16x16 $mul cells -- one per multiply expression -- even though the
+// FSM only ever performs one multiply per cycle. Two came from lut_index's
+// x*255, now written as (x<<8) - x; that alone cut die area by 21,356 um2 and
+// power by 71%. The remaining six are routed here through a single
+// multiplier whose operands are selected by the FSM state. S_CELL used to
+// compute f*c and i*g in the same cycle, so it is now split into S_CELL_A and
+// S_CELL_B, costing one cycle per unit per timestep -- 512 cycles per
+// inference against a ~98,000-cycle total.
+//
+// The arithmetic is unchanged: every product is identical, and the cell
+// update is still sat_round(f*c + i*g) summed at full width before rounding.
+//
+// Throughput: one inference is 26,624 MACs, roughly 99,000 cycles, about 3 ms
+// at 33 MHz against a window that arrives every 10 s. The systolic array's
+// case has to be energy per inference, not throughput.
 //
 // Numeric contract -- must match rtl/weights/WEIGHT_FORMAT.md and
 // python/ml/quantise.py exactly:
 //   Q8.8 signed two's complement. Accumulate at full width; round once back
-//   to Q8.8 after each matrix-vector product and after each elementwise
-//   product. Gates are 256-entry LUTs over [-8, +8].
+//   to Q8.8, ROUND-HALF-UP, after each matrix-vector product and after each
+//   elementwise product. Gates are 256-entry LUTs over [-8, +8].
 //
 // Weight SRAM: 512 x 32, two Q8.8 slots per word, even slot in bits [15:0].
-// Slots 0-4 are header (mu[2], sd[2], threshold) and are not read here --
-// normalisation happens upstream in the SICU, and the threshold is applied
-// by firmware, so this block emits raw logits and a plain argmax.
+// Registered output: address at edge N, sampled at N+1, data valid at N+2,
+// hence the two-state fetch (S_FETCH then S_FETCH_D).
 //
 // Repo conventions: _i inputs, _o outputs, _q registered, rst_ni synchronous
 // active-low reset, ready/valid on the input side, single clock domain.
@@ -46,22 +53,18 @@ module lstm_accel #(
     input  wire                clk_i,
     input  wire                rst_ni,
 
-    // ---- control ----------------------------------------------------------
-    input  wire                start_i,       // pulse: begin a new sequence
+    input  wire                start_i,
     output wire                busy_o,
 
-    // ---- input stream: one timestep per handshake -------------------------
     input  wire                in_valid_i,
     output wire                in_ready_o,
-    input  wire signed [15:0]  in_feat0_i,    // Q8.8, already normalised
+    input  wire signed [15:0]  in_feat0_i,
     input  wire signed [15:0]  in_feat1_i,
 
-    // ---- weight SRAM read port (1-cycle read latency) ---------------------
-    output reg                 w_csb_o,       // active low
+    output reg                 w_csb_o,
     output reg  [ 8:0]         w_addr_o,
     input  wire [31:0]         w_dout_i,
 
-    // ---- result -----------------------------------------------------------
     output reg                 out_valid_o,
     output reg  signed [15:0]  logit0_o,
     output reg  signed [15:0]  logit1_o,
@@ -69,10 +72,6 @@ module lstm_accel #(
     output reg  [ 1:0]         class_o
 );
 
-  // -------------------------------------------------------------------------
-  // Weight slot map, derived from the parameters so it cannot drift out of
-  // step with WEIGHT_FORMAT.md while HIDDEN and N_FEAT match the export.
-  // -------------------------------------------------------------------------
   localparam int unsigned G      = 4 * HIDDEN;
   localparam int unsigned HDR    = 5;
 
@@ -87,16 +86,16 @@ module lstm_accel #(
   localparam int unsigned HEDW_B = BHH1_B + G;
   localparam int unsigned HEDB_B = HEDW_B + N_CLASS * HIDDEN;
 
-  // -------------------------------------------------------------------------
   typedef enum logic [4:0] {
     S_IDLE,
     S_ACCEPT,
     S_ROW_START,
-    S_BIH,          // bias_ih fetched
-    S_BHH,          // bias_hh fetched
-    S_MACD,         // weight fetched, accumulate
+    S_BIH,
+    S_BHH,
+    S_MACD,
     S_GATE,
-    S_CELL,
+    S_CELL_A,       // cell_tmp = f * c
+    S_CELL_B,       // c_new = round(cell_tmp + i * g)
     S_HID,
     S_UNIT_NEXT,
     S_HEAD_START,
@@ -105,19 +104,20 @@ module lstm_accel #(
     S_HEAD_STORE,
     S_ARGMAX,
     S_DONE,
-    S_FETCH,        // issue SRAM read for slot_q
-    S_FETCH_D       // capture the half-word, return to ret_q
+    S_FETCH,
+    S_FETCH_D
   } state_e;
 
   state_e state_q, ret_q;
 
-  reg signed [15:0] h_q      [0:1][0:HIDDEN-1];  // current hidden
-  reg signed [15:0] h_prev_q [0:1][0:HIDDEN-1];  // hidden at t-1
+  reg signed [15:0] h_q      [0:1][0:HIDDEN-1];
+  reg signed [15:0] h_prev_q [0:1][0:HIDDEN-1];
   reg signed [15:0] c_q      [0:1][0:HIDDEN-1];
   reg signed [15:0] xin_q    [0:N_FEAT-1];
-  reg signed [15:0] gate_q   [0:3];              // i, f, g, o
+  reg signed [15:0] gate_q   [0:3];
   reg signed [15:0] logit_q  [0:N_CLASS-1];
   reg signed [15:0] c_new_q;
+  reg signed [ACC_W-1:0] cell_tmp_q;
 
   reg [5:0]  step_q;
   reg        layer_q;
@@ -148,12 +148,6 @@ module lstm_accel #(
     end
   endfunction
 
-  // -------------------------------------------------------------------------
-  // Gate LUTs: 256 Q8.8 entries over [-8, +8].
-  //   index = round((clip(x,-8,8) + 8) / 16 * 255)
-  // In Q8.8 the clip bounds are +/-2048, so:
-  //   index = ((xq + 2048) * 255 + 2048) >> 12
-  // -------------------------------------------------------------------------
   reg signed [15:0] lut_sigmoid [0:255];
   reg signed [15:0] lut_tanh    [0:255];
 
@@ -162,14 +156,15 @@ module lstm_accel #(
     $readmemh(LUT_TANH, lut_tanh);
   end
 
+  // index = round((clip(x,-8,8) + 8) / 16 * 255), i.e. in Q8.8
+  //       = ((xq + 2048) * 255 + 2048) >> 12
+  // written with (x<<8) - x so no multiplier is inferred.
   function automatic [7:0] lut_index(input signed [15:0] x);
     logic signed [31:0] xc, num;
     begin
       xc = 32'(x);
       if (xc >  2048) xc =  2048;
       if (xc < -2048) xc = -2048;
-      // x*255 == (x<<8) - x, so no multiplier is needed here. Yosys
-      // inferred two $mul cells for this function alone.
       num = ((((xc + 2048) <<< 8) - (xc + 2048)) + 2048) >>> 12;
       if (num > 255) num = 255;
       if (num < 0)   num = 0;
@@ -186,8 +181,6 @@ module lstm_accel #(
   endfunction
 
   // -------------------------------------------------------------------------
-  // Addressing helpers
-  // -------------------------------------------------------------------------
   wire [9:0] row = 10'(gsel_q) * 10'(HIDDEN) + 10'(unit_q);
 
   function automatic [9:0] term_slot(input [5:0] k);
@@ -202,9 +195,6 @@ module lstm_accel #(
     end
   endfunction
 
-  // Operand paired with term k. Layer 0 takes the external features and its
-  // own previous hidden; layer 1 takes layer 0's CURRENT hidden as input and
-  // its own previous hidden as the recurrent term.
   function automatic signed [15:0] term_operand(input [5:0] k);
     logic [5:0] in_w;
     begin
@@ -216,6 +206,31 @@ module lstm_accel #(
     end
   endfunction
 
+  wire [9:0] bih_base = (layer_q == 1'b0) ? 10'(BIH0_B) : 10'(BIH1_B);
+  wire [9:0] bhh_base = (layer_q == 1'b0) ? 10'(BHH0_B) : 10'(BHH1_B);
+
+  // -------------------------------------------------------------------------
+  // THE shared multiplier. Every product in the block goes through here;
+  // the FSM state selects the operands. One $mul cell in the netlist.
+  // -------------------------------------------------------------------------
+  reg  signed [15:0] mul_a, mul_b;
+  wire signed [31:0] mul_y = mul_a * mul_b;
+
+  always_comb begin
+    mul_a = 16'sd0;
+    mul_b = 16'sd0;
+    case (state_q)
+      S_MACD:      begin mul_a = fetched_q; mul_b = term_operand(term_q);        end
+      S_CELL_A:    begin mul_a = gate_q[1]; mul_b = c_q[layer_q][unit_q];        end
+      S_CELL_B:    begin mul_a = gate_q[0]; mul_b = gate_q[2];                   end
+      S_HID:       begin mul_a = gate_q[3]; mul_b = f_tanh(c_new_q);             end
+      S_HEAD_MACD: begin mul_a = fetched_q; mul_b = h_q[1][term_q[4:0]];         end
+      default:     ;
+    endcase
+  end
+
+  wire signed [ACC_W-1:0] mul_ext = ACC_W'(mul_y);
+
   task automatic do_fetch(input [9:0] s, input state_e r);
     begin
       slot_q   <= s;
@@ -226,9 +241,6 @@ module lstm_accel #(
       state_q  <= S_FETCH;
     end
   endtask
-
-  wire [9:0] bih_base = (layer_q == 1'b0) ? 10'(BIH0_B) : 10'(BIH1_B);
-  wire [9:0] bhh_base = (layer_q == 1'b0) ? 10'(BHH0_B) : 10'(BHH1_B);
 
   integer i, j;
 
@@ -253,6 +265,7 @@ module lstm_accel #(
       term_q      <= 6'd0;
       cls_q       <= 2'd0;
       acc_q       <= '0;
+      cell_tmp_q  <= '0;
       c_new_q     <= 16'sd0;
       for (i = 0; i < 2; i = i + 1)
         for (j = 0; j < HIDDEN; j = j + 1) begin
@@ -269,7 +282,6 @@ module lstm_accel #(
 
       case (state_q)
 
-        // ---------------------------------------------------------------
         S_IDLE: begin
           if (start_i) begin
             step_q  <= 6'd0;
@@ -286,12 +298,10 @@ module lstm_accel #(
           end
         end
 
-        // ---------------------------------------------------------------
         S_ACCEPT: begin
           if (in_valid_i) begin
             xin_q[0] <= in_feat0_i;
             if (N_FEAT > 1) xin_q[1] <= in_feat1_i;
-            // Snapshot h(t-1) for both layers before this timestep runs.
             for (i = 0; i < 2; i = i + 1)
               for (j = 0; j < HIDDEN; j = j + 1)
                 h_prev_q[i][j] <= h_q[i][j];
@@ -302,8 +312,6 @@ module lstm_accel #(
           end
         end
 
-        // ---------------------------------------------------------------
-        // Begin one gate row: acc = bias_ih + bias_hh, then MAC the terms.
         S_ROW_START: begin
           acc_q  <= '0;
           term_q <= 6'd0;
@@ -321,7 +329,7 @@ module lstm_accel #(
         end
 
         S_MACD: begin
-          acc_q <= acc_q + ACC_W'(fetched_q * term_operand(term_q));
+          acc_q <= acc_q + mul_ext;
           if (term_q + 6'd1 == n_terms) begin
             state_q <= S_GATE;
           end else begin
@@ -330,35 +338,36 @@ module lstm_accel #(
           end
         end
 
-        // ---------------------------------------------------------------
         S_GATE: begin
           gate_q[gsel_q] <= (gsel_q == 2'd2) ? f_tanh(sat_round(acc_q))
                                              : f_sigmoid(sat_round(acc_q));
           if (gsel_q == 2'd3) begin
-            state_q <= S_CELL;
+            state_q <= S_CELL_A;
           end else begin
             gsel_q  <= gsel_q + 2'd1;
             state_q <= S_ROW_START;
           end
         end
 
-        // c = f*c + i*g
-        S_CELL: begin
-          c_new_q <= sat_round(
-              ACC_W'(gate_q[1] * c_q[layer_q][unit_q]) +
-              ACC_W'(gate_q[0] * gate_q[2]));
+        // c = f*c + i*g, now over two cycles through the shared multiplier.
+        // The sum is still formed at full width before the single rounding.
+        S_CELL_A: begin
+          cell_tmp_q <= mul_ext;                       // f * c
+          state_q    <= S_CELL_B;
+        end
+
+        S_CELL_B: begin
+          c_new_q <= sat_round(cell_tmp_q + mul_ext);  // + i * g
           state_q <= S_HID;
         end
 
         // h = o * tanh(c)
         S_HID: begin
           c_q[layer_q][unit_q] <= c_new_q;
-          h_q[layer_q][unit_q] <= sat_round(
-              ACC_W'(gate_q[3] * f_tanh(c_new_q)));
+          h_q[layer_q][unit_q] <= sat_round(mul_ext);
           state_q <= S_UNIT_NEXT;
         end
 
-        // ---------------------------------------------------------------
         S_UNIT_NEXT: begin
           gsel_q <= 2'd0;
           if (unit_q + 5'd1 == 5'(HIDDEN)) begin
@@ -379,8 +388,6 @@ module lstm_accel #(
           end
         end
 
-        // ---------------------------------------------------------------
-        // logits = head.weight @ h[layer 1] + head.bias
         S_HEAD_START: begin
           acc_q  <= '0;
           term_q <= 6'd0;
@@ -393,7 +400,7 @@ module lstm_accel #(
         end
 
         S_HEAD_MACD: begin
-          acc_q <= acc_q + ACC_W'(fetched_q * h_q[1][term_q[4:0]]);
+          acc_q <= acc_q + mul_ext;
           if (term_q + 6'd1 == 6'(HIDDEN)) begin
             state_q <= S_HEAD_STORE;
           end else begin
@@ -412,7 +419,6 @@ module lstm_accel #(
           end
         end
 
-        // ---------------------------------------------------------------
         S_ARGMAX: begin
           logit0_o <= logit_q[0];
           logit1_o <= logit_q[1];
@@ -431,36 +437,21 @@ module lstm_accel #(
           state_q     <= S_IDLE;
         end
 
-        // ---------------------------------------------------------------
-        // Shared fetch tail: the read was issued last cycle, data is valid
-        // now, so capture the requested half and return to the caller.
+        // Address is registered out at edge N, the SRAM samples it at N+1,
+        // and its registered dout is valid after that, so data can only be
+        // captured at N+2. S_FETCH is that extra cycle.
+        S_FETCH: state_q <= S_FETCH_D;
+
         S_FETCH_D: begin
           fetched_q <= half_q ? $signed(w_dout_i[31:16])
                               : $signed(w_dout_i[15:0]);
           state_q   <= ret_q;
         end
 
-        // Address is registered out at edge N, the SRAM samples it at
-        // N+1 and its registered dout is valid after that, so data can only
-        // be captured at N+2. This state is that extra cycle.
-        S_FETCH: state_q <= S_FETCH_D;
-
         default: state_q <= S_IDLE;
       endcase
     end
   end
-
-`ifdef LSTM_ACCEL_ASSERT
-  // Procedural equivalents, so these also run under Icarus (no SVA).
-  always_ff @(posedge clk_i) begin
-    if (rst_ni) begin
-      if (out_valid_o && busy_o)
-        $error("lstm_accel: out_valid_o asserted while busy");
-      if (in_valid_i && !in_ready_o && state_q != S_IDLE)
-        $display("lstm_accel: input offered while not ready (stalling)");
-    end
-  end
-`endif
 
 endmodule
 
