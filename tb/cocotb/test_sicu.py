@@ -60,7 +60,8 @@ async def reset(dut):
     dut.rst_ni.value = 0
     dut.enable_i.value = 0
     dut.in_valid_i.value = 0
-    dut.amp_i.value = 0
+    dut.i_i.value = 0
+    dut.q_i.value = 0
     for _ in range(5):
         await RisingEdge(dut.clk_i)
     dut.rst_ni.value = 1
@@ -72,7 +73,7 @@ async def reset(dut):
 async def feed_window(dut, samples, timeout=20000):
     """Push one window and wait for s4_valid_o. Returns (s4, sat, shift)."""
     fed = 0
-    dut.amp_i.value = samples[0]
+    dut.i_i.value = samples[0]
     dut.in_valid_i.value = 1
 
     for _ in range(timeout):
@@ -91,7 +92,7 @@ async def feed_window(dut, samples, timeout=20000):
         if took:
             fed += 1
             if fed < len(samples):
-                dut.amp_i.value = samples[fed]
+                dut.i_i.value = samples[fed]
                 dut.in_valid_i.value = 1
             else:
                 dut.in_valid_i.value = 0

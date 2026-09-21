@@ -60,7 +60,8 @@ module sicu #(
 
     input  wire                    in_valid_i,
     output wire                    in_ready_o,
-    input  wire [AMP_W-1:0]        amp_i,
+    input  wire signed [AMP_W-1:0] i_i,           // prompt I
+    input  wire signed [AMP_W-1:0] q_i,           // prompt Q
 
     output reg                     s4_valid_o,
     output reg  [15:0]             s4_o,          // Q4.12 unsigned
@@ -104,7 +105,11 @@ module sicu #(
   // -------------------------------------------------------------------------
   // Intensity path
   // -------------------------------------------------------------------------
-  wire [2*AMP_W-1:0] inten_full = amp_i * amp_i;
+  // Intensity is I^2 + Q^2 -- power, not magnitude, so no square root and
+  // no CORDIC. Each square is non-negative, so the sum fits 2*AMP_W bits.
+  wire [2*AMP_W-1:0] i_sq       = (2*AMP_W)'($signed(i_i) * $signed(i_i));
+  wire [2*AMP_W-1:0] q_sq       = (2*AMP_W)'($signed(q_i) * $signed(q_i));
+  wire [2*AMP_W-1:0] inten_full = i_sq + q_sq;
   wire [2*AMP_W-1:0] inten_shft = inten_full >> shift_q;
   wire               inten_sat  = |(inten_shft[2*AMP_W-1:INT_W]);
   wire [INT_W-1:0]   inten      = inten_sat ? INT_W'(INT_MAX)
