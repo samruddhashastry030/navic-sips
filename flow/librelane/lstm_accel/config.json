@@ -4,13 +4,13 @@
         "dir::../../../rtl/lstm_accel.sv"
     ],
     "CLOCK_PORT": "clk_i",
-    "CLOCK_PERIOD": 30,
+    "CLOCK_PERIOD": 33,
     "PDK": "sky130A",
     "FP_CORE_UTIL": 40,
     "SYNTH_PARAMETERS": [
         "LUT_SIG=\"/home/samruddha730/navic-sips/rtl/weights/lut_sigmoid.hex\"",
         "LUT_TANH=\"/home/samruddha730/navic-sips/rtl/weights/lut_tanh.hex\""
     ],
-    "PNR_SDC_FILE": "dir::base.sdc",
+    "PNR_SDC_FILE": "dir::pnr.sdc",
     "SIGNOFF_SDC_FILE": "dir::base.sdc"
 }
