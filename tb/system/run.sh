@@ -40,3 +40,15 @@ echo
 echo "=== 4. REAL SICU fed synthetic I/Q + REAL accelerator ==="
 iverilog -g2012 -o syss.vvp tb_system_sicu.sv $SRC "$ROOT/rtl/lstm_accel.sv" "$ROOT/rtl/sicu.sv" 2>/dev/null
 vvp -n syss.vvp | grep -E "$KEEP|window|saturated|worst|  [0-9 ]{3}  "
+
+FULL="$SRC $ROOT/rtl/lstm_accel.sv $ROOT/rtl/sicu.sv $ROOT/rtl/spi_master.sv"
+
+echo
+echo "=== 5. FULL RTL: real SPI master on pins, bit-level flash ==="
+iverilog -g2012 -o sysp.vvp tb_system_spi.sv $FULL 2>/dev/null
+vvp -n sysp.vvp | grep -E "$KEEP|flash saw|worst"
+
+echo
+echo "=== 6. FULL RTL, corrupted image: retry framing at pin level ==="
+iverilog -g2012 -DBAD_FLASH -o syspf.vvp tb_system_spi.sv $FULL 2>/dev/null
+vvp -n syspf.vvp | grep -E "cycle|flash saw|pass|FAIL|PASS"
