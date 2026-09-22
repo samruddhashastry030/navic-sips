@@ -8,8 +8,11 @@ experiment, and changes what the real chip needs:
   - absolute paths for the firmware and gate-LUT images, which $readmemh
     loads at synthesis (Yosys runs from the step directory, so relative
     paths fail -- found on the accelerator run)
-  - signoff at 33 ns, implementation against 30 ns (pnr.sdc), the
-    over-constraint that closed the accelerator at every corner
+  - signoff at 33 ns, implementation against 27 ns (pnr.sdc). The resizer
+    stops once it meets the target it is given, so implementing against a
+    tighter clock is what leaves margin at signoff. 30 ns left the
+    accelerator's FSM loop 0.32 ns short at ss; 27 ns gives it 6 ns to
+    work with against a 33 ns signoff.
 The previous config is kept as config.floorplan.json.
 """
 import json, os, shutil
@@ -62,11 +65,11 @@ json.dump(c, open(cfg_path, "w"), indent=4)
 
 sdc = open(os.path.join(D, "base.sdc")).read()
 open(os.path.join(D, "pnr.sdc"), "w").write(
-    sdc.replace("-period $::env(CLOCK_PERIOD)", "-period 30.0"))
+    sdc.replace("-period $::env(CLOCK_PERIOD)", "-period 27.0"))
 
 print("config.json rewritten (old one saved as config.floorplan.json)")
 print("  RTL files      :", len(c["VERILOG_FILES"]))
-print("  clock          : signoff 33 ns, implementation 30 ns")
+print("  clock          : signoff 33 ns, implementation 27 ns")
 print("  hold margin    : 0.5 ns (placement and global routing)")
 print("  Magic DRC      : off (KLayout DRC is authoritative)")
 for p in c["SYNTH_PARAMETERS"]: print("  param          :", p)

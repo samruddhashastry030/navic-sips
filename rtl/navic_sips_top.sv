@@ -67,12 +67,29 @@ module navic_sips_top #(
 );
 
   // -------------------------------------------------------------------------
-  // Resets. The host's soft reset restarts everything except its own
-  // register block. soft_reset is a registered one-cycle pulse, so the
-  // derived reset is glitch-free.
+  // Resets.
+  //
+  // rst_ni is an asynchronous pin, and navic_sips_regs and spi_master reset
+  // asynchronously from it. Releasing an asynchronous reset straight from a
+  // pin is a real hazard: a flop can sample it as it changes and go
+  // metastable, and whole-chip timing showed it as removal violations at ss
+  // on thousands of reset inputs. This synchroniser asserts asynchronously
+  // the instant the pin drops -- so reset still works with no clock -- and
+  // releases synchronously two clock edges later.
+  //
+  // The host's soft reset restarts everything except its own register block.
+  // soft_reset is a registered one-cycle pulse, so the derived reset is
+  // glitch-free.
   // -------------------------------------------------------------------------
   wire enable, bist_start, soft_reset;
-  wire core_rst_n = rst_ni & ~soft_reset;
+
+  reg [1:0] rst_sync_q;
+  always_ff @(posedge clk_i or negedge rst_ni)
+    if (!rst_ni) rst_sync_q <= 2'b00;
+    else         rst_sync_q <= {rst_sync_q[0], 1'b1};
+  wire rst_sync_n = rst_sync_q[1];
+
+  wire core_rst_n = rst_sync_n & ~soft_reset;
 
   // -------------------------------------------------------------------------
   // CPU <-> bus
@@ -222,7 +239,7 @@ module navic_sips_top #(
   // -------------------------------------------------------------------------
   navic_sips_regs u_regs (
       .clk_i             (clk_i),
-      .rst_ni            (rst_ni),           // NOT soft-reset: host config
+      .rst_ni            (rst_sync_n),       // NOT soft-reset: host config
       .bus_sel_i         (bus_sel_i),
       .bus_we_i          (bus_we_i),
       .bus_addr_i        (bus_addr_i),
