@@ -19,3 +19,7 @@ tb/cocotb/sim_build*/
 tb/cocotb/results.xml
 tb/cocotb/dump.vcd
 flow/librelane/*/runs/
+fw/firmware.elf
+fw/firmware.bin
+fw/firmware.hex
+fw/firmware.map
