@@ -1,43 +1,41 @@
 // ---------------------------------------------------------------------------
 // navic_sips_top.sv
 //
-// TOP-LEVEL STUB — this is a FLOORPLAN EXPERIMENT, not a working chip.
+// NavIC-SIPS chip top level: every block is real RTL, no stubs.
 //
-// PURPOSE
-// -------
-// Every block below that isn't already written is an empty stub with the
-// right ports. The design does nothing. The point is to push a chip-shaped
-// thing through LibreLane NOW and find out what we don't know about:
+//   PicoRV32 (RV32IMC) <-> soc_bus <-> boot ROM (inside soc_bus)
+//                                  <-> data RAM    = event SRAM port 0
+//                                  <-> weight SRAM port 0   (load at boot)
+//                                  <-> system regs -> navic_sips_regs inputs
+//                                  <-> spi_master  -> SPI pins (weight flash)
+//                                  <-> uart_tx     -> uart_tx_o
+//                                  <-> sicu        <- prompt I/Q pins
+//                                  <-> lstm_accel  -> weight SRAM port 1
+//   host bus pins <-> navic_sips_regs -> irq_o, ready_pin_o, fault_pin_o
 //
-//   - SRAM macro placement (the flow has never seen a macro)
-//   - power grid over macros
-//   - chip-level congestion with 11 blocks instead of 1
-//   - timing paths that cross a memory
-//   - how big the die actually wants to be
+// The host (receiver baseband) sees the chip ONLY through navic_sips_regs.
+// Everything the chip decides reaches it via the idx_valid / pred_valid
+// strobes from soc_bus -- see soc_bus.sv for why those strobes exist.
 //
-// Two 2KB macros are ~570,000 um2. Our three real blocks together are
-// ~18,000 um2. Memory dominates by 30x, so the floorplan is two macros with
-// logic tucked around them — not the other way round. This run tells us
-// whether that's as awkward as it sounds.
+// Pin protocol for prompt I/Q: iq_valid_i is a ONE-CYCLE strobe per sample.
+// There is no backpressure pin: a sample arriving while the SICU is busy
+// finishing a window (~450 cycles) is dropped. At 50 Hz against a 33 MHz
+// clock that never happens in practice, but it is a real constraint.
 //
-// This is the December milestone in miniature. Doing it in August means
-// meeting these problems on a design where nothing works yet, so nothing
-// can break.
-//
-// REAL BLOCKS (already written and verified)
-//   navic_sips_regs, spi_master
-//
-// STUBS (ports only — replace as each is written)
-//   sicu, lstm_accel, cordic, picorv32_stub, bootrom, uart_tx_stub
-//
-// NOTE ON uart_tx: the real uart_tx.sv exists but its full port list isn't
-// captured here. Replace uart_tx_stub with the real instance and fix the
-// connections — that's a five-minute job and a good first check.
+// Host soft reset (CTRL.SOFTRST) restarts the CPU and datapath -- the
+// firmware reboots and reloads its weights -- but not navic_sips_regs, which
+// holds the host's own configuration.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
 
-module navic_sips_top (
+module navic_sips_top #(
+    parameter              FW_HEX       = "fw/firmware.hex",
+    parameter              LUT_SIG      = "rtl/weights/lut_sigmoid.hex",
+    parameter              LUT_TANH     = "rtl/weights/lut_tanh.hex",
+    parameter int unsigned SPI_CLK_DIV  = 1,             // SCLK = clk / 4
+    parameter int unsigned CLK_FREQ_HZ  = 33_000_000
+) (
     input  wire        clk_i,
     input  wire        rst_ni,
 
@@ -69,61 +67,162 @@ module navic_sips_top (
 );
 
   // -------------------------------------------------------------------------
-  // Internal nets
+  // Resets. The host's soft reset restarts everything except its own
+  // register block. soft_reset is a registered one-cycle pulse, so the
+  // derived reset is glitch-free.
   // -------------------------------------------------------------------------
-  wire        enable, bist_start, soft_reset;
+  wire enable, bist_start, soft_reset;
+  wire core_rst_n = rst_ni & ~soft_reset;
 
-  wire        idx_valid;
-  wire [15:0] s4_val, sphi_val;
+  // -------------------------------------------------------------------------
+  // CPU <-> bus
+  // -------------------------------------------------------------------------
+  wire        mem_valid, mem_instr, mem_ready;
+  wire [31:0] mem_addr, mem_wdata, mem_rdata;
+  wire [ 3:0] mem_wstrb;
 
-  wire        pred_valid;
-  wire [ 1:0] pred_class;
+  picorv32 #(
+      .ENABLE_MUL        (1),
+      .ENABLE_DIV        (1),
+      .COMPRESSED_ISA    (1),
+      .ENABLE_IRQ        (1),
+      .ENABLE_COUNTERS64 (0),
+      .PROGADDR_RESET    (32'h0000_0000),
+      .PROGADDR_IRQ      (32'h0000_0010)
+  ) u_cpu (
+      .clk          (clk_i),
+      .resetn       (core_rst_n),
+      .trap         (),
+      .mem_valid    (mem_valid),
+      .mem_instr    (mem_instr),
+      .mem_ready    (mem_ready),
+      .mem_addr     (mem_addr),
+      .mem_wdata    (mem_wdata),
+      .mem_wstrb    (mem_wstrb),
+      .mem_rdata    (mem_rdata),
+      .mem_la_read  (),
+      .mem_la_write (),
+      .mem_la_addr  (),
+      .mem_la_wdata (),
+      .mem_la_wstrb (),
+      .pcpi_valid   (),
+      .pcpi_insn    (),
+      .pcpi_rs1     (),
+      .pcpi_rs2     (),
+      .pcpi_wr      (1'b0),
+      .pcpi_rd      (32'd0),
+      .pcpi_wait    (1'b0),
+      .pcpi_ready   (1'b0),
+      .irq          (32'd0),         // firmware polls; see memory-map.md
+      .eoi          (),
+      .trace_valid  (),
+      .trace_data   ()
+  );
+
+  // -------------------------------------------------------------------------
+  // Bus-side nets
+  // -------------------------------------------------------------------------
+  wire        dram_csb, dram_web, wram_csb0, wram_web0;
+  wire [ 3:0] dram_wmask, wram_wmask0;
+  wire [ 7:0] dram_addr;
+  wire [ 8:0] wram_addr0;
+  wire [31:0] dram_din, dram_dout, wram_din0, wram_dout0;
+
+  wire        weights_ready, weights_fault, bist_done, bist_pass;
+  wire [ 1:0] pred_class, loop_band_pref;
   wire [ 3:0] pred_conf;
-
-  wire [ 2:0] loop_pll_bw;
+  wire [ 2:0] loop_pll_bw, loop_t_coh;
   wire        loop_fll_en;
-  wire [ 2:0] loop_t_coh;
-  wire [ 1:0] loop_band_pref;
+  wire [15:0] s4_report;
+  wire        idx_valid, pred_valid;
 
-  wire        weights_ready, weights_fault;
-  wire        bist_done, bist_pass;
-
-  // CORDIC
-  wire        cordic_valid;
-  wire [15:0] cordic_phase;
-
-  // weight SRAM port A (write during load, read during inference)
-  wire        wsram_clk    = clk_i;
-  wire        wsram_csb0;
-  wire        wsram_web0;
-  wire [ 3:0] wsram_wmask0;
-  wire [ 8:0] wsram_addr0;
-  wire [31:0] wsram_din0;
-  wire [31:0] wsram_dout0;
-  wire        wsram_csb1;
-  wire [ 8:0] wsram_addr1;
-  wire [31:0] wsram_dout1;
-
-  // event log SRAM
-  wire        esram_csb0;
-  wire        esram_web0;
-  wire [ 3:0] esram_wmask0;
-  wire [ 7:0] esram_addr0;
-  wire [31:0] esram_din0;
-  wire [31:0] esram_dout0;
-  wire        esram_csb1;
-  wire [ 7:0] esram_addr1;
-
-  // SPI arbitration
   wire        spi_start, spi_hold_cs, spi_done;
   wire [ 7:0] spi_tx, spi_rx;
 
+  wire        uart_valid, uart_ready;
+  wire [ 7:0] uart_data;
+
+  wire        sicu_enable, sicu_s4_valid, sicu_saturated, sicu_busy, sicu_ready;
+  wire [15:0] sicu_s4;
+  wire [ 4:0] sicu_shift;
+
+  wire        accel_start, accel_busy, accel_in_valid, accel_in_ready;
+  wire        accel_out_valid;
+  wire [15:0] accel_feat0, accel_feat1;
+  wire [15:0] accel_logit0, accel_logit1, accel_logit2;
+  wire [ 1:0] accel_class;
+  wire        wram_csb1;
+  wire [ 8:0] wram_addr1;
+  wire [31:0] wram_dout1;
+
+  soc_bus #(.FW_HEX(FW_HEX)) u_bus (
+      .clk_i             (clk_i),
+      .rst_ni            (core_rst_n),
+      .mem_valid_i       (mem_valid),
+      .mem_ready_o       (mem_ready),
+      .mem_addr_i        (mem_addr),
+      .mem_wdata_i       (mem_wdata),
+      .mem_wstrb_i       (mem_wstrb),
+      .mem_rdata_o       (mem_rdata),
+      .dram_csb_o        (dram_csb),
+      .dram_web_o        (dram_web),
+      .dram_wmask_o      (dram_wmask),
+      .dram_addr_o       (dram_addr),
+      .dram_din_o        (dram_din),
+      .dram_dout_i       (dram_dout),
+      .wram_csb_o        (wram_csb0),
+      .wram_web_o        (wram_web0),
+      .wram_wmask_o      (wram_wmask0),
+      .wram_addr_o       (wram_addr0),
+      .wram_din_o        (wram_din0),
+      .wram_dout_i       (wram_dout0),
+      .weights_ready_o   (weights_ready),
+      .weights_fault_o   (weights_fault),
+      .bist_done_o       (bist_done),
+      .bist_pass_o       (bist_pass),
+      .pred_class_o      (pred_class),
+      .pred_conf_o       (pred_conf),
+      .loop_pll_bw_o     (loop_pll_bw),
+      .loop_fll_en_o     (loop_fll_en),
+      .loop_t_coh_o      (loop_t_coh),
+      .loop_band_pref_o  (loop_band_pref),
+      .s4_report_o       (s4_report),
+      .idx_valid_o       (idx_valid),
+      .pred_valid_o      (pred_valid),
+      .host_ctrl_i       ({soft_reset, bist_start, bypass_pin_i, enable}),
+      .spi_start_o       (spi_start),
+      .spi_hold_cs_o     (spi_hold_cs),
+      .spi_tx_o          (spi_tx),
+      .spi_rx_i          (spi_rx),
+      .spi_done_i        (spi_done),
+      .uart_valid_o      (uart_valid),
+      .uart_data_o       (uart_data),
+      .uart_busy_i       (~uart_ready),
+      .sicu_enable_o     (sicu_enable),
+      .sicu_s4_valid_i   (sicu_s4_valid),
+      .sicu_s4_i         (sicu_s4),
+      .sicu_saturated_i  (sicu_saturated),
+      .sicu_shift_i      (sicu_shift),
+      .sicu_busy_i       (sicu_busy),
+      .accel_start_o     (accel_start),
+      .accel_busy_i      (accel_busy),
+      .accel_in_valid_o  (accel_in_valid),
+      .accel_in_ready_i  (accel_in_ready),
+      .accel_feat0_o     (accel_feat0),
+      .accel_feat1_o     (accel_feat1),
+      .accel_out_valid_i (accel_out_valid),
+      .accel_logit0_i    (accel_logit0),
+      .accel_logit1_i    (accel_logit1),
+      .accel_logit2_i    (accel_logit2),
+      .accel_class_i     (accel_class)
+  );
+
   // -------------------------------------------------------------------------
-  // REAL: host register block
+  // Host register block -- the chip's only face to the receiver
   // -------------------------------------------------------------------------
   navic_sips_regs u_regs (
       .clk_i             (clk_i),
-      .rst_ni            (rst_ni),
+      .rst_ni            (rst_ni),           // NOT soft-reset: host config
       .bus_sel_i         (bus_sel_i),
       .bus_we_i          (bus_we_i),
       .bus_addr_i        (bus_addr_i),
@@ -131,8 +230,8 @@ module navic_sips_top (
       .bus_rdata_o       (bus_rdata_o),
       .bus_ack_o         (bus_ack_o),
       .idx_valid_i       (idx_valid),
-      .s4_i              (s4_val),
-      .sphi_i            (sphi_val),
+      .s4_i              (s4_report),
+      .sphi_i            (16'd0),            // sigma_phi not computed
       .pred_valid_i      (pred_valid),
       .pred_class_i      (pred_class),
       .pred_conf_i       (pred_conf),
@@ -154,12 +253,12 @@ module navic_sips_top (
   );
 
   // -------------------------------------------------------------------------
-  // REAL: SPI master
+  // Peripherals
   // -------------------------------------------------------------------------
   spi_master #(.DIV_WIDTH(8), .DATA_WIDTH(8)) u_spi (
       .clk_i     (clk_i),
-      .rst_ni    (rst_ni),
-      .clk_div_i (8'd4),
+      .rst_ni    (core_rst_n),
+      .clk_div_i (8'(SPI_CLK_DIV)),
       .start_i   (spi_start),
       .hold_cs_i (spi_hold_cs),
       .tx_data_i (spi_tx),
@@ -172,260 +271,81 @@ module navic_sips_top (
       .miso_i    (spi_miso_i)
   );
 
-  // -------------------------------------------------------------------------
-  // STUBS — replace each as it is written
-  // -------------------------------------------------------------------------
-  cordic_stub u_cordic (
-      .clk_i     (clk_i),
-      .rst_ni    (rst_ni),
-      .valid_i   (iq_valid_i),
-      .i_i       (iq_i_i),
-      .q_i       (iq_q_i),
-      .valid_o   (cordic_valid),
-      .phase_o   (cordic_phase)
+  uart_tx #(.CLK_FREQ_HZ(CLK_FREQ_HZ), .BAUD_RATE(115_200)) u_uart (
+      .clk_i   (clk_i),
+      .rst_ni  (core_rst_n),
+      .data_i  (uart_data),
+      .valid_i (uart_valid),
+      .ready_o (uart_ready),
+      .tx_o    (uart_tx_o)
   );
 
-  sicu_stub u_sicu (
-      .clk_i        (clk_i),
-      .rst_ni       (rst_ni),
-      .enable_i     (enable),
-      .iq_valid_i   (iq_valid_i),
-      .i_i          (iq_i_i),
-      .q_i          (iq_q_i),
-      .phase_valid_i(cordic_valid),
-      .phase_i      (cordic_phase),
-      .idx_valid_o  (idx_valid),
-      .s4_o         (s4_val),
-      .sphi_o       (sphi_val)
+  sicu u_sicu (
+      .clk_i       (clk_i),
+      .rst_ni      (core_rst_n),
+      .enable_i    (sicu_enable),
+      .busy_o      (sicu_busy),
+      .in_valid_i  (iq_valid_i),
+      .in_ready_o  (sicu_ready),             // no backpressure pin; see header
+      .i_i         (iq_i_i),
+      .q_i         (iq_q_i),
+      .s4_valid_o  (sicu_s4_valid),
+      .s4_o        (sicu_s4),
+      .saturated_o (sicu_saturated),
+      .shift_o     (sicu_shift)
   );
 
-  lstm_accel_stub u_lstm (
-      .clk_i        (clk_i),
-      .rst_ni       (rst_ni),
-      .enable_i     (enable),
-      .idx_valid_i  (idx_valid),
-      .s4_i         (s4_val),
-      .sphi_i       (sphi_val),
-      .w_csb_o      (wsram_csb1),
-      .w_addr_o     (wsram_addr1),
-      .w_data_i     (wsram_dout1),
-      .pred_valid_o (pred_valid),
-      .pred_class_o (pred_class),
-      .pred_conf_o  (pred_conf)
+  lstm_accel #(.LUT_SIG(LUT_SIG), .LUT_TANH(LUT_TANH)) u_acc (
+      .clk_i       (clk_i),
+      .rst_ni      (core_rst_n),
+      .start_i     (accel_start),
+      .busy_o      (accel_busy),
+      .in_valid_i  (accel_in_valid),
+      .in_ready_o  (accel_in_ready),
+      .in_feat0_i  (accel_feat0),
+      .in_feat1_i  (accel_feat1),
+      .w_csb_o     (wram_csb1),
+      .w_addr_o    (wram_addr1),
+      .w_dout_i    (wram_dout1),
+      .out_valid_o (accel_out_valid),
+      .logit0_o    (accel_logit0),
+      .logit1_o    (accel_logit1),
+      .logit2_o    (accel_logit2),
+      .class_o     (accel_class)
   );
-
-  picorv32_stub u_cpu (
-      .clk_i           (clk_i),
-      .rst_ni          (rst_ni),
-      .soft_reset_i    (soft_reset),
-      .bist_start_i    (bist_start),
-      .pred_class_i    (pred_class),
-      .spi_start_o     (spi_start),
-      .spi_hold_cs_o   (spi_hold_cs),
-      .spi_tx_o        (spi_tx),
-      .spi_rx_i        (spi_rx),
-      .spi_done_i      (spi_done),
-      .w_csb_o         (wsram_csb0),
-      .w_web_o         (wsram_web0),
-      .w_wmask_o       (wsram_wmask0),
-      .w_addr_o        (wsram_addr0),
-      .w_din_o         (wsram_din0),
-      .w_dout_i        (wsram_dout0),
-      .e_csb_o         (esram_csb0),
-      .e_web_o         (esram_web0),
-      .e_wmask_o       (esram_wmask0),
-      .e_addr_o        (esram_addr0),
-      .e_din_o         (esram_din0),
-      .e_dout_i        (esram_dout0),
-      .loop_pll_bw_o   (loop_pll_bw),
-      .loop_fll_en_o   (loop_fll_en),
-      .loop_t_coh_o    (loop_t_coh),
-      .loop_band_pref_o(loop_band_pref),
-      .weights_ready_o (weights_ready),
-      .weights_fault_o (weights_fault),
-      .bist_done_o     (bist_done),
-      .bist_pass_o     (bist_pass),
-      .uart_tx_o       (uart_tx_o)
-  );
-
-  // event-log SRAM read port is unused in the stub
-  assign esram_csb1  = 1'b1;
-  assign esram_addr1 = 8'd0;
 
   // -------------------------------------------------------------------------
-  // SRAM MACROS — the reason this experiment exists
-  //
-  // VERIFY THE PORT LIST before running. Check the PDK's own Verilog:
-  //   ~/.ciel/ciel/sky130/versions/*/sky130A/libs.ref/sky130_sram_macros/verilog/
+  // SRAM macros. Power is connected by the flow (PDN_MACRO_CONNECTIONS), so
+  // there are no power pins here -- unchanged from the floorplan experiment.
   // -------------------------------------------------------------------------
   sky130_sram_2kbyte_1rw1r_32x512_8 u_weight_sram (
-      .clk0   (wsram_clk),
-      .csb0   (wsram_csb0),
-      .web0   (wsram_web0),
-      .wmask0 (wsram_wmask0),
-      .addr0  (wsram_addr0),
-      .din0   (wsram_din0),
-      .dout0  (wsram_dout0),
-      .clk1   (wsram_clk),
-      .csb1   (wsram_csb1),
-      .addr1  (wsram_addr1),
-      .dout1  (wsram_dout1)
+      .clk0   (clk_i),
+      .csb0   (wram_csb0),
+      .web0   (wram_web0),
+      .wmask0 (wram_wmask0),
+      .addr0  (wram_addr0),
+      .din0   (wram_din0),
+      .dout0  (wram_dout0),
+      .clk1   (clk_i),
+      .csb1   (wram_csb1),
+      .addr1  (wram_addr1),
+      .dout1  (wram_dout1)
   );
 
   sky130_sram_1kbyte_1rw1r_32x256_8 u_event_sram (
       .clk0   (clk_i),
-      .csb0   (esram_csb0),
-      .web0   (esram_web0),
-      .wmask0 (esram_wmask0),
-      .addr0  (esram_addr0),
-      .din0   (esram_din0),
-      .dout0  (esram_dout0),
+      .csb0   (dram_csb),
+      .web0   (dram_web),
+      .wmask0 (dram_wmask),
+      .addr0  (dram_addr),
+      .din0   (dram_din),
+      .dout0  (dram_dout),
       .clk1   (clk_i),
-      .csb1   (esram_csb1),
-      .addr1  (esram_addr1),
+      .csb1   (1'b1),                         // port 1 unused
+      .addr1  (8'd0),
       .dout1  ()
   );
 
-endmodule
-
-
-// ===========================================================================
-// STUB MODULES
-//
-// Each holds a single flop so synthesis does not optimise it away entirely,
-// giving the floorplanner something to place. Replace one at a time as the
-// real blocks are written.
-// ===========================================================================
-
-module cordic_stub (
-    input  wire        clk_i, rst_ni, valid_i,
-    input  wire [15:0] i_i, q_i,
-    output reg         valid_o,
-    output reg  [15:0] phase_o
-);
-  always @(posedge clk_i or negedge rst_ni)
-    if (!rst_ni) begin valid_o <= 1'b0; phase_o <= 16'h0; end
-    else begin valid_o <= valid_i; phase_o <= i_i ^ q_i; end
-endmodule
-
-
-module sicu_stub (
-    input  wire        clk_i, rst_ni, enable_i, iq_valid_i,
-    input  wire [15:0] i_i, q_i,
-    input  wire        phase_valid_i,
-    input  wire [15:0] phase_i,
-    output reg         idx_valid_o,
-    output reg  [15:0] s4_o, sphi_o
-);
-  always @(posedge clk_i or negedge rst_ni)
-    if (!rst_ni) begin
-      idx_valid_o <= 1'b0; s4_o <= 16'h0; sphi_o <= 16'h0;
-    end else if (enable_i) begin
-      idx_valid_o <= iq_valid_i & phase_valid_i;
-      s4_o        <= i_i + q_i;
-      sphi_o      <= phase_i;
-    end
-endmodule
-
-
-module lstm_accel_stub (
-    input  wire        clk_i, rst_ni, enable_i, idx_valid_i,
-    input  wire [15:0] s4_i, sphi_i,
-    output reg         w_csb_o,
-    output reg  [ 8:0] w_addr_o,
-    input  wire [31:0] w_data_i,
-    output reg         pred_valid_o,
-    output reg  [ 1:0] pred_class_o,
-    output reg  [ 3:0] pred_conf_o
-);
-  always @(posedge clk_i or negedge rst_ni)
-    if (!rst_ni) begin
-      w_csb_o <= 1'b1; w_addr_o <= 9'd0;
-      pred_valid_o <= 1'b0; pred_class_o <= 2'd0; pred_conf_o <= 4'd0;
-    end else if (enable_i) begin
-      w_csb_o      <= ~idx_valid_i;
-      w_addr_o     <= w_addr_o + 9'd1;
-      pred_valid_o <= idx_valid_i;
-      pred_class_o <= s4_i[15:14] ^ {2{^s4_i}};
-      pred_conf_o  <= (w_data_i[3:0] ^ sphi_i[3:0]) ^ {4{(^w_data_i) ^ (^sphi_i)}};
-    end
-endmodule
-
-
-module picorv32_stub (
-    input  wire        clk_i, rst_ni, soft_reset_i, bist_start_i,
-    input  wire [ 1:0] pred_class_i,
-    output reg         spi_start_o, spi_hold_cs_o,
-    output reg  [ 7:0] spi_tx_o,
-    input  wire [ 7:0] spi_rx_i,
-    input  wire        spi_done_i,
-    output reg         w_csb_o, w_web_o,
-    output reg  [ 3:0] w_wmask_o,
-    output reg  [ 8:0] w_addr_o,
-    output reg  [31:0] w_din_o,
-    input  wire [31:0] w_dout_i,
-    output reg         e_csb_o, e_web_o,
-    output reg  [ 3:0] e_wmask_o,
-    output reg  [ 7:0] e_addr_o,
-    output reg  [31:0] e_din_o,
-    input  wire [31:0] e_dout_i,
-    output reg  [ 2:0] loop_pll_bw_o,
-    output reg         loop_fll_en_o,
-    output reg  [ 2:0] loop_t_coh_o,
-    output reg  [ 1:0] loop_band_pref_o,
-    output reg         weights_ready_o, weights_fault_o,
-    output reg         bist_done_o, bist_pass_o,
-    output reg         uart_tx_o
-);
-  reg [7:0] ctr;
-  always @(posedge clk_i or negedge rst_ni)
-    if (!rst_ni) begin
-      spi_start_o <= 1'b0; spi_hold_cs_o <= 1'b0; spi_tx_o <= 8'h0;
-      w_csb_o <= 1'b1; w_web_o <= 1'b1; w_wmask_o <= 4'hF;
-      w_addr_o <= 9'd0; w_din_o <= 32'h0;
-      e_csb_o <= 1'b1; e_web_o <= 1'b1; e_wmask_o <= 4'hF;
-      e_addr_o <= 8'd0; e_din_o <= 32'h0;
-      loop_pll_bw_o <= 3'd3; loop_fll_en_o <= 1'b0;
-      loop_t_coh_o <= 3'd3; loop_band_pref_o <= 2'd0;
-      weights_ready_o <= 1'b0; weights_fault_o <= 1'b0;
-      bist_done_o <= 1'b0; bist_pass_o <= 1'b0;
-      uart_tx_o <= 1'b1; ctr <= 8'h0;
-    end else begin
-      ctr <= ctr + 8'd1 + {7'd0, (^w_dout_i) ^ (^e_dout_i)};
-
-      // stand-in for the boot weight-load sequence
-      spi_start_o   <= (ctr == 8'd1);
-      spi_hold_cs_o <= (ctr < 8'd200);
-      spi_tx_o      <= ctr;
-      w_csb_o       <= ~spi_done_i;
-      w_web_o       <= ~spi_done_i;
-      w_wmask_o     <= 4'hF;
-      if (spi_done_i) w_addr_o <= w_addr_o + 9'd1;
-      w_din_o       <= {24'h0, spi_rx_i};
-
-      // stand-in for the class -> loop settings firmware table
-      case (pred_class_i)
-        2'd0: begin loop_pll_bw_o <= 3'd2; loop_t_coh_o <= 3'd4;
-                    loop_fll_en_o <= 1'b0; loop_band_pref_o <= 2'd0; end
-        2'd1: begin loop_pll_bw_o <= 3'd4; loop_t_coh_o <= 3'd3;
-                    loop_fll_en_o <= 1'b0; loop_band_pref_o <= 2'd0; end
-        default: begin loop_pll_bw_o <= 3'd7; loop_t_coh_o <= 3'd1;
-                       loop_fll_en_o <= 1'b1; loop_band_pref_o <= 2'd1; end
-      endcase
-
-      // event log write
-      e_csb_o   <= ~(ctr[3:0] == 4'hF);
-      e_web_o   <= ~(ctr[3:0] == 4'hF);
-      e_wmask_o <= 4'hF;
-      if (ctr[3:0] == 4'hF) e_addr_o <= e_addr_o + 8'd1;
-      e_din_o   <= {16'h0, w_dout_i[7:0], e_dout_i[7:0]};
-
-      weights_ready_o <= (w_addr_o == 9'd511);
-      weights_fault_o <= 1'b0;
-      bist_done_o     <= bist_start_i;
-      bist_pass_o     <= bist_start_i;
-      uart_tx_o       <= ctr[0] ^ soft_reset_i;
-    end
 endmodule
 
 `default_nettype wire
