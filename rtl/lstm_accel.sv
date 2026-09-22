@@ -20,6 +20,16 @@
 // The arithmetic is unchanged: every product is identical, and the cell
 // update is still sat_round(f*c + i*g) summed at full width before rounding.
 //
+// PIPELINED GATE LOOKUPS. Whole-chip timing at ss found the critical path
+// was S_GATE doing, in ONE cycle: 40-bit sat_round -> lut_index -> 256-entry
+// LUT read -> gate_q write (worst path started at acc_q[32], ~30 gates).
+// It closed standalone only through over-constraint, and failed by 1.20 ns
+// once the logic was spread across the full die. S_GATE now computes the LUT
+// index and S_GATE_LUT reads the table. S_HID had the same shape -- a tanh
+// lookup feeding the multiplier -- so S_TANH_C does that lookup first.
+// Cost: 4 cycles per unit per layer per timestep, ~2,560 cycles per
+// inference against ~99,000. Arithmetic unchanged.
+//
 // Throughput: one inference is 26,624 MACs, roughly 99,000 cycles, about 3 ms
 // at 33 MHz against a window that arrives every 10 s. The systolic array's
 // case has to be energy per inference, not throughput.
@@ -93,9 +103,11 @@ module lstm_accel #(
     S_BIH,
     S_BHH,
     S_MACD,
-    S_GATE,
+    S_GATE,         // gate LUT index from the accumulator
+    S_GATE_LUT,     // gate LUT read into gate_q
     S_CELL_A,       // cell_tmp = f * c
     S_CELL_B,       // c_new = round(cell_tmp + i * g)
+    S_TANH_C,       // tanh(c_new) looked up and registered
     S_HID,
     S_UNIT_NEXT,
     S_HEAD_START,
@@ -117,6 +129,8 @@ module lstm_accel #(
   reg signed [15:0] gate_q   [0:3];
   reg signed [15:0] logit_q  [0:N_CLASS-1];
   reg signed [15:0] c_new_q;
+  reg        [ 7:0] gidx_q;          // registered gate LUT index
+  reg signed [15:0] tanh_c_q;        // registered tanh(c_new)
   reg signed [ACC_W-1:0] cell_tmp_q;
 
   reg [5:0]  step_q;
@@ -223,7 +237,7 @@ module lstm_accel #(
       S_MACD:      begin mul_a = fetched_q; mul_b = term_operand(term_q);        end
       S_CELL_A:    begin mul_a = gate_q[1]; mul_b = c_q[layer_q][unit_q];        end
       S_CELL_B:    begin mul_a = gate_q[0]; mul_b = gate_q[2];                   end
-      S_HID:       begin mul_a = gate_q[3]; mul_b = f_tanh(c_new_q);             end
+      S_HID:       begin mul_a = gate_q[3]; mul_b = tanh_c_q;                    end
       S_HEAD_MACD: begin mul_a = fetched_q; mul_b = h_q[1][term_q[4:0]];         end
       default:     ;
     endcase
@@ -267,6 +281,8 @@ module lstm_accel #(
       acc_q       <= '0;
       cell_tmp_q  <= '0;
       c_new_q     <= 16'sd0;
+      gidx_q      <= 8'd0;
+      tanh_c_q    <= 16'sd0;
       for (i = 0; i < 2; i = i + 1)
         for (j = 0; j < HIDDEN; j = j + 1) begin
           h_q[i][j]      <= 16'sd0;
@@ -339,8 +355,13 @@ module lstm_accel #(
         end
 
         S_GATE: begin
-          gate_q[gsel_q] <= (gsel_q == 2'd2) ? f_tanh(sat_round(acc_q))
-                                             : f_sigmoid(sat_round(acc_q));
+          gidx_q  <= lut_index(sat_round(acc_q));
+          state_q <= S_GATE_LUT;
+        end
+
+        S_GATE_LUT: begin
+          gate_q[gsel_q] <= (gsel_q == 2'd2) ? lut_tanh[gidx_q]
+                                             : lut_sigmoid[gidx_q];
           if (gsel_q == 2'd3) begin
             state_q <= S_CELL_A;
           end else begin
@@ -358,7 +379,12 @@ module lstm_accel #(
 
         S_CELL_B: begin
           c_new_q <= sat_round(cell_tmp_q + mul_ext);  // + i * g
-          state_q <= S_HID;
+          state_q <= S_TANH_C;
+        end
+
+        S_TANH_C: begin
+          tanh_c_q <= f_tanh(c_new_q);
+          state_q  <= S_HID;
         end
 
         // h = o * tanh(c)

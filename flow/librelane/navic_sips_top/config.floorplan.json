@@ -2,16 +2,11 @@
     "DESIGN_NAME": "navic_sips_top",
     "VERILOG_FILES": [
         "dir::../../../rtl/navic_sips_top.sv",
-        "dir::../../../rtl/soc_bus.sv",
         "dir::../../../rtl/navic_sips_regs.sv",
-        "dir::../../../rtl/spi_master.sv",
-        "dir::../../../rtl/uart_tx.sv",
-        "dir::../../../rtl/sicu.sv",
-        "dir::../../../rtl/lstm_accel.sv",
-        "dir::../../../rtl/third_party/picorv32.v"
+        "dir::../../../rtl/spi_master.sv"
     ],
     "CLOCK_PORT": "clk_i",
-    "CLOCK_PERIOD": 33,
+    "CLOCK_PERIOD": 10,
     "PDK": "sky130A",
     "FP_SIZING": "absolute",
     "DIE_AREA": [
@@ -73,21 +68,12 @@
             }
         }
     },
-    "PNR_SDC_FILE": "dir::pnr.sdc",
+    "PNR_SDC_FILE": "dir::base.sdc",
     "SIGNOFF_SDC_FILE": "dir::base.sdc",
     "PDN_MACRO_CONNECTIONS": [
         "u_.*_sram VPWR VGND vccd1 vssd1"
     ],
     "MAGIC_GDS_FLATGLOB": [
         "sky130_sram_*"
-    ],
-    "SYNTH_PARAMETERS": [
-        "FW_HEX=\"/home/samruddha730/navic-sips/fw/firmware.hex\"",
-        "LUT_SIG=\"/home/samruddha730/navic-sips/rtl/weights/lut_sigmoid.hex\"",
-        "LUT_TANH=\"/home/samruddha730/navic-sips/rtl/weights/lut_tanh.hex\""
-    ],
-    "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
-    "PL_RESIZER_HOLD_SLACK_MARGIN": 0.5,
-    "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.5,
-    "RUN_MAGIC_DRC": false
+    ]
 }
