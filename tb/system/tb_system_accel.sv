@@ -1,4 +1,13 @@
-// tb_system.sv -- first end-to-end run of the NavIC-SIPS control path.
+// tb_system_accel.sv -- end-to-end run with the REAL LSTM accelerator.
+//
+// Same as tb_system.sv, but the accelerator model is replaced by two copies of
+// the verified lstm_accel:
+//   u_acc  in the system: reads weights the CPU loaded over SPI into the
+//          weight SRAM (port 1), fed timesteps by the firmware through soc_bus
+//   u_ref  reference: reads the weight image straight from the file, fed the
+//          identical timesteps on the identical cycles
+// Both are the same RTL, already bit-exact against the golden vectors, so any
+// difference in their logits can only come from integration.
 //
 // Real PicoRV32 (RV32IMC, as hardened), real soc_bus, real firmware from the
 // boot ROM. Behavioural models stand in for:
@@ -12,8 +21,8 @@
 // publishes the class, loop settings and weights_ready it should.
 `timescale 1ns/1ps
 `default_nettype none
-module tb_system;
-  localparam SICU_PERIOD = 1500;
+module tb_system_accel;
+  localparam SICU_PERIOD = 4000;
 
   reg clk = 0, rst_n = 0;
   always #5 clk = ~clk;
@@ -53,9 +62,9 @@ module tb_system;
   wire uart_valid; wire [7:0] uart_data;
 
   wire sicu_enable; reg sicu_s4_valid = 0; reg [15:0] sicu_s4 = 0;
-  wire accel_start, accel_in_valid; reg accel_in_ready = 0, accel_out_valid = 0;
+  wire accel_start, accel_in_valid, accel_in_ready, accel_out_valid, accel_busy;
   wire [15:0] feat0, feat1;
-  reg [15:0] l0 = 0, l1 = 0, l2 = 0; reg [1:0] acls = 0; reg accel_busy = 0;
+  wire signed [15:0] l0, l1, l2; wire [1:0] acls;
 
   soc_bus #(.FW_HEX("firmware.hex")) u_bus (
     .clk_i(clk), .rst_ni(rst_n),
@@ -97,7 +106,34 @@ module tb_system;
         begin if (wram_wmask[k]) wmem[wram_addr][8*k +: 8] <= wram_din[8*k +: 8]; end
       else wram_dout <= wmem[wram_addr];
     end
+    if (!acc_w_csb) acc_w_dout <= wmem[acc_w_addr];      // port 1, read only
+    if (!ref_w_csb) ref_w_dout <= refmem[ref_w_addr];
   end
+
+  // ---- the real accelerator, and its reference twin ------------------------
+  wire acc_w_csb, ref_w_csb; wire [8:0] acc_w_addr, ref_w_addr;
+  reg  [31:0] acc_w_dout = 0, ref_w_dout = 0;
+  reg  [31:0] refmem [0:511];
+  initial $readmemh("wimage.hex", refmem);
+
+  lstm_accel #(.LUT_SIG("lut_sigmoid.hex"), .LUT_TANH("lut_tanh.hex")) u_acc (
+    .clk_i(clk), .rst_ni(rst_n),
+    .start_i(accel_start), .busy_o(accel_busy),
+    .in_valid_i(accel_in_valid), .in_ready_o(accel_in_ready),
+    .in_feat0_i(feat0), .in_feat1_i(feat1),
+    .w_csb_o(acc_w_csb), .w_addr_o(acc_w_addr), .w_dout_i(acc_w_dout),
+    .out_valid_o(accel_out_valid),
+    .logit0_o(l0), .logit1_o(l1), .logit2_o(l2), .class_o(acls));
+
+  wire ref_ready, ref_valid, ref_busy; wire signed [15:0] r0, r1, r2; wire [1:0] rcls;
+  lstm_accel #(.LUT_SIG("lut_sigmoid.hex"), .LUT_TANH("lut_tanh.hex")) u_ref (
+    .clk_i(clk), .rst_ni(rst_n),
+    .start_i(accel_start), .busy_o(ref_busy),
+    .in_valid_i(accel_in_valid), .in_ready_o(ref_ready),
+    .in_feat0_i(feat0), .in_feat1_i(feat1),
+    .w_csb_o(ref_w_csb), .w_addr_o(ref_w_addr), .w_dout_i(ref_w_dout),
+    .out_valid_o(ref_valid),
+    .logit0_o(r0), .logit1_o(r1), .logit2_o(r2), .class_o(rcls));
 
   // ---- SPI flash model, byte level ----------------------------------------
   // Byte 0 is the command, 1-3 the address; data starts at byte 4.
@@ -127,7 +163,7 @@ module tb_system;
     sicu_s4_valid <= 0;
     if (sicu_enable) begin
       sicu_t = sicu_t + 1;
-      if (sicu_t == SICU_PERIOD) begin
+      if (sicu_t == SICU_PERIOD && n_windows < 63) begin
         sicu_t = 0;
         sicu_s4 <= s4_seq[n_windows];
         sicu_s4_valid <= 1;
@@ -137,27 +173,23 @@ module tb_system;
     end
   end
 
-  // ---- accelerator model --------------------------------------------------
-  integer n_feat = 0, accel_wait = -1, n_starts = 0;
+  // ---- record what the firmware feeds, and when each accelerator finishes --
+  integer n_feat = 0, n_starts = 0, lockstep_err = 0;
   reg [15:0] got_feat [0:31];
+  reg signed [15:0] sys_l [0:2], ref_l [0:2];
+  reg sys_done = 0, ref_done = 0;
   always @(posedge clk) begin
-    accel_in_ready  <= 0;
-    accel_out_valid <= 0;
-    if (accel_start) begin n_starts = n_starts + 1; n_feat = 0; accel_busy <= 1; end
-    if (accel_in_valid && !accel_in_ready && n_feat < 32) begin
-      accel_in_ready <= 1;
-      got_feat[n_feat] = feat0;
-      if (feat0 !== feat1) begin
-        $display("FAIL  timestep %0d: feat0 %h != feat1 %h", n_feat, feat0, feat1);
-      end
+    if (accel_start) n_starts = n_starts + 1;
+    if (accel_in_valid && accel_in_ready) begin
+      if (n_feat < 32) got_feat[n_feat] = feat0;
       n_feat = n_feat + 1;
-      if (n_feat == 32) accel_wait = 40;
     end
-    if (accel_wait > 0) accel_wait = accel_wait - 1;
-    else if (accel_wait == 0) begin
-      // SEVERE by a clear margin: l2 - max(l0, l1) = 0.75 >= 0.25
-      l0 <= 16'sh0040; l1 <= 16'sh0080; l2 <= 16'sh0140; acls <= 2;
-      accel_out_valid <= 1; accel_busy <= 0; accel_wait = -1;
+    if (accel_in_ready !== ref_ready) lockstep_err = lockstep_err + 1;
+    if (accel_out_valid && !sys_done) begin
+      sys_l[0] = l0; sys_l[1] = l1; sys_l[2] = l2; sys_done = 1;
+    end
+    if (ref_valid && !ref_done) begin
+      ref_l[0] = r0; ref_l[1] = r1; ref_l[2] = r2; ref_done = 1;
     end
   end
 
@@ -221,15 +253,39 @@ module tb_system;
       end
     $display("%s  32 timesteps normalised correctly and fed oldest-first",
              (errors == 0) ? "pass" : "    ");
-    if (pred_class !== 2) begin $display("FAIL  class %0d, expected 2 (SEVERE)", pred_class); errors = errors + 1; end
-    else $display("pass  class = SEVERE via the logit-margin rule");
-    if ({loop_pll_bw, loop_fll_en, loop_t_coh, loop_band_pref} !== {3'd3, 1'b1, 3'd1, 2'd0}) begin
-      $display("FAIL  loop settings pll=%0d fll=%0d tcoh=%0d band=%0d",
-               loop_pll_bw, loop_fll_en, loop_t_coh, loop_band_pref);
+    $display("       accelerator started %0d time(s), took %0d timesteps", n_starts, n_feat);
+    if (lockstep_err) begin
+      $display("FAIL  system and reference accelerators left lockstep (%0d cycles)", lockstep_err);
       errors = errors + 1;
-    end else $display("pass  SEVERE loop settings applied");
-    $display("       confidence = %0d (margin 0.75 / 0.25 per step = 3)", pred_conf);
-    if (pred_conf !== 3) begin $display("FAIL  confidence"); errors = errors + 1; end
+    end else $display("pass  system and reference accelerators stayed in lockstep");
+    if (!sys_done || !ref_done) begin
+      $display("FAIL  an accelerator never finished"); errors = errors + 1;
+    end
+    $display("       system    logits  %6d %6d %6d", sys_l[0], sys_l[1], sys_l[2]);
+    $display("       reference logits  %6d %6d %6d", ref_l[0], ref_l[1], ref_l[2]);
+    if (sys_l[0] !== ref_l[0] || sys_l[1] !== ref_l[1] || sys_l[2] !== ref_l[2]) begin
+      $display("FAIL  logits differ -- integration corrupted weights or timesteps");
+      errors = errors + 1;
+    end else $display("pass  logits bit-identical to the reference");
+    begin : expect_class
+      integer ru, ec, m, ec_conf;
+      ru = (sys_l[0] > sys_l[1]) ? sys_l[0] : sys_l[1];
+      if (sys_l[2] - ru >= 64) begin ec = 2; m = sys_l[2] - ru; end
+      else if (sys_l[1] > sys_l[0]) begin
+        ec = 1; m = sys_l[1] - ((sys_l[0] > sys_l[2]) ? sys_l[0] : sys_l[2]);
+      end else begin
+        ec = 0; m = sys_l[0] - ((sys_l[1] > sys_l[2]) ? sys_l[1] : sys_l[2]);
+      end
+      ec_conf = m >>> 6; if (ec_conf > 15) ec_conf = 15; if (ec_conf < 0) ec_conf = 0;
+      if (pred_class !== ec[1:0]) begin
+        $display("FAIL  firmware published class %0d, margin rule gives %0d", pred_class, ec);
+        errors = errors + 1;
+      end else $display("pass  firmware's class %0d matches the margin rule on real logits", pred_class);
+      if (pred_conf !== ec_conf[3:0]) begin
+        $display("FAIL  confidence %0d, expected %0d", pred_conf, ec_conf);
+        errors = errors + 1;
+      end else $display("pass  confidence %0d", pred_conf);
+    end
     if (s4_report !== s4_seq[31]) begin $display("FAIL  S4 report %h", s4_report); errors = errors + 1; end
     else $display("pass  latest S4 reported to the host block");
 

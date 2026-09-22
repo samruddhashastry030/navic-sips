@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# First end-to-end simulation of the NavIC-SIPS control path.
-#   real PicoRV32 + real soc_bus + real firmware, behavioural flash/SICU/accel
+# End-to-end simulations of the NavIC-SIPS control path.
+#   real PicoRV32 + soc_bus + firmware; behavioural flash and SICU.
 # Run from anywhere:  bash tb/system/run.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -9,7 +9,10 @@ cd "$HERE"
 
 make -C "$ROOT/fw" >/dev/null
 cp "$ROOT/fw/firmware.hex" .
-python3 make_flash.py
+cp "$ROOT/rtl/weights/lut_sigmoid.hex" "$ROOT/rtl/weights/lut_tanh.hex" .
+
+# Flash image built from the REAL exported weights, plus a corrupted copy.
+python3 make_flash.py "$ROOT/rtl/weights/weights.hex"
 python3 - <<'PY'
 lines = open('flash.hex').read().split()
 lines[1000] = '%02x' % (int(lines[1000], 16) ^ 0x01)
@@ -17,12 +20,18 @@ open('flash_bad.hex', 'w').write('\n'.join(lines) + '\n')
 PY
 
 SRC="$ROOT/rtl/soc_bus.sv $ROOT/rtl/third_party/picorv32.v"
+KEEP="cycle|pass|FAIL|PASS|latency|= |logits|started|header"
 
-echo "=== normal boot ==="
+echo "=== 1. normal boot, behavioural accelerator ==="
 iverilog -g2012 -o sys.vvp tb_system.sv $SRC 2>/dev/null
-vvp -n sys.vvp | grep -E "cycle|pass|FAIL|PASS|latency|= "
+vvp -n sys.vvp | grep -E "$KEEP" | grep -v "class = SEVERE\|SEVERE loop\|confidence"
 
 echo
-echo "=== corrupted flash image ==="
+echo "=== 2. corrupted flash image ==="
 iverilog -g2012 -o sysf.vvp tb_system_fault.sv $SRC 2>/dev/null
 vvp -n sysf.vvp | grep -E "cycle|pass|FAIL"
+
+echo
+echo "=== 3. REAL accelerator vs reference twin, real weights ==="
+iverilog -g2012 -o sysa.vvp tb_system_accel.sv $SRC "$ROOT/rtl/lstm_accel.sv" 2>/dev/null
+vvp -n sysa.vvp | grep -E "$KEEP"
