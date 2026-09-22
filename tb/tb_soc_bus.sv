@@ -23,6 +23,7 @@ module tb_soc_bus;
   wire weights_ready, weights_fault, bist_done, bist_pass, loop_fll_en;
   wire [1:0] pred_class, loop_band_pref; wire [3:0] pred_conf;
   wire [2:0] loop_pll_bw, loop_t_coh; wire [15:0] s4_report;
+  wire idx_valid, pred_valid;
   reg  [3:0] host_ctrl = 4'b0101;
 
   wire spi_start, spi_hold_cs; wire [7:0] spi_tx;
@@ -49,7 +50,8 @@ module tb_soc_bus;
     .pred_class_o(pred_class), .pred_conf_o(pred_conf),
     .loop_pll_bw_o(loop_pll_bw), .loop_fll_en_o(loop_fll_en),
     .loop_t_coh_o(loop_t_coh), .loop_band_pref_o(loop_band_pref),
-    .s4_report_o(s4_report), .host_ctrl_i(host_ctrl),
+    .s4_report_o(s4_report), .idx_valid_o(idx_valid), .pred_valid_o(pred_valid),
+    .host_ctrl_i(host_ctrl),
     .spi_start_o(spi_start), .spi_hold_cs_o(spi_hold_cs), .spi_tx_o(spi_tx),
     .spi_rx_i(spi_rx), .spi_done_i(spi_done),
     .uart_valid_o(uart_valid), .uart_data_o(uart_data), .uart_busy_i(uart_busy),
@@ -83,11 +85,15 @@ module tb_soc_bus;
 
   // ---- count one-cycle pulses, to prove side effects happen once --------
   integer n_spi_start = 0, n_uart = 0, n_accel_start = 0, n_dram_ops = 0;
+  integer n_idx = 0, n_pred = 0;
+  reg [1:0] class_at_pulse; reg [15:0] s4_at_pulse;
   always @(posedge clk) begin
     if (spi_start)   n_spi_start   = n_spi_start + 1;
     if (uart_valid)  n_uart        = n_uart + 1;
     if (accel_start) n_accel_start = n_accel_start + 1;
     if (!dram_csb)   n_dram_ops    = n_dram_ops + 1;
+    if (idx_valid)  begin n_idx  = n_idx + 1;  s4_at_pulse    = s4_report;  end
+    if (pred_valid) begin n_pred = n_pred + 1; class_at_pulse = pred_class; end
   end
 
   // ---- PicoRV32-style master ---------------------------------------------
@@ -162,8 +168,18 @@ module tb_soc_bus;
 
     // system register block
     wr32(32'h3000_0000, 32'h1);           check("weights_ready", weights_ready, 1);
+    b0 = n_pred;
     wr32(32'h3000_0004, 32'h00000052);    // class 2, conf 5
     check("pred_class", pred_class, 2);   check("pred_conf", pred_conf, 5);
+    check("pred_valid pulses", n_pred - b0, 1);
+    check("class valid WITH the pulse", class_at_pulse, 2);
+    b0 = n_idx;
+    wr32(32'h3000_000C, 32'h00000ABC);
+    check("idx_valid pulses", n_idx - b0, 1);
+    check("S4 valid WITH the pulse", s4_at_pulse, 16'h0ABC);
+    b0 = n_pred;
+    wr32(32'h3000_0008, 32'h00000000);    // loop write must not fire pred_valid
+    check("no pred_valid on loop write", n_pred - b0, 0);
     wr32(32'h3000_0008, 32'h0000019B);    // pll 3, fll 1, tcoh 1, band 3
     check("loop pll", loop_pll_bw, 3);    check("loop fll", loop_fll_en, 1);
     check("loop tcoh", loop_t_coh, 1);    check("loop band", loop_band_pref, 3);

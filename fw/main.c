@@ -218,8 +218,13 @@ int main(void)
         infer(&l0, &l1, &l2);
         uint32_t cls = classify(l0, l1, l2, &conf);
 
-        SYS_RESULT = cls | (conf << 4);
+        /* ORDER MATTERS. Writing SYS_RESULT pulses pred_valid, which latches
+         * the class in navic_sips_regs and fires the host's SEVERE interrupt.
+         * Loop settings are not latched there -- they pass straight through --
+         * so they must already hold the new values when that interrupt fires,
+         * or the host reads stale settings at exactly the wrong moment. */
         SYS_LOOP   = loop_table[cls];
+        SYS_RESULT = cls | (conf << 4);
         SYS_STATUS = SYS_ST_WEIGHTS_READY;      /* first result -> ready */
     }
 }

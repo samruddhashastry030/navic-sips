@@ -34,6 +34,14 @@
 // twice. If a new result arrives in the same cycle as the clearing read, the
 // new result wins.
 //
+// Strobes. navic_sips_regs latches S4 only on idx_valid and the class only on
+// pred_valid, and raises the host's SEVERE interrupt from pred_valid. Writing
+// SYS_S4 / SYS_RESULT therefore pulses the matching strobe, on the same edge
+// the new value appears, so the register block latches the new value. Loop
+// settings are NOT latched there -- they pass straight through -- so firmware
+// must write SYS_LOOP before SYS_RESULT, or the host would see stale settings
+// in the cycles after the interrupt.
+//
 // Repo conventions: _i inputs, _o outputs, _q registered, rst_ni synchronous
 // active-low reset, single clock domain.
 // ---------------------------------------------------------------------------
@@ -83,6 +91,9 @@ module soc_bus #(
     output reg  [ 2:0]  loop_t_coh_o,
     output reg  [ 1:0]  loop_band_pref_o,
     output reg  [15:0]  s4_report_o,
+    output reg          idx_valid_o,     // pulse on SYS_S4 write -> latches S4
+    output reg          pred_valid_o,    // pulse on SYS_RESULT write -> latches
+                                         //   class/conf, fires the SEVERE irq
     input  wire [ 3:0]  host_ctrl_i,     // {soft_reset, bist_start, bypass, enable}
 
     // ---- SPI master ------------------------------------------------------
@@ -253,6 +264,8 @@ module soc_bus #(
       loop_t_coh_o     <= 3'd3;
       loop_band_pref_o <= 2'd0;
       s4_report_o      <= 16'd0;
+      idx_valid_o      <= 1'b0;
+      pred_valid_o     <= 1'b0;
 
       spi_start_o      <= 1'b0;
       spi_hold_cs_o    <= 1'b0;
@@ -273,6 +286,8 @@ module soc_bus #(
       accel_done_q     <= 1'b0;
     end else begin
       mem_ready_o   <= 1'b0;
+      idx_valid_o   <= 1'b0;
+      pred_valid_o  <= 1'b0;
       spi_start_o   <= 1'b0;
       uart_valid_o  <= 1'b0;
       accel_start_o <= 1'b0;
@@ -314,6 +329,7 @@ module soc_bus #(
                 8'h04: begin
                   pred_class_o <= mem_wdata_i[1:0];
                   pred_conf_o  <= mem_wdata_i[7:4];
+                  pred_valid_o <= 1'b1;
                 end
                 8'h08: begin
                   loop_pll_bw_o    <= mem_wdata_i[2:0];
@@ -321,7 +337,10 @@ module soc_bus #(
                   loop_t_coh_o     <= mem_wdata_i[6:4];
                   loop_band_pref_o <= mem_wdata_i[8:7];
                 end
-                8'h0C: s4_report_o <= mem_wdata_i[15:0];
+                8'h0C: begin
+                  s4_report_o <= mem_wdata_i[15:0];
+                  idx_valid_o <= 1'b1;
+                end
                 default: ;
               endcase
               R_SPI: case (off)
