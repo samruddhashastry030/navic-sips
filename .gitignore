@@ -26,3 +26,5 @@ fw/firmware.map
 tb/system/*.hex
 tb/system/*.vvp
 tb/*.hex
+tb/top/*.hex
+tb/top/*.vvp
