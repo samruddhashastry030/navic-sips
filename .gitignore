@@ -23,3 +23,5 @@ fw/firmware.elf
 fw/firmware.bin
 fw/firmware.hex
 fw/firmware.map
+tb/system/*.hex
+tb/system/*.vvp
