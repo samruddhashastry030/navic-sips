@@ -193,11 +193,17 @@ int main(void)
         uint32_t st = SICU_STATUS;
         uint16_t s4 = (uint16_t)SICU_S4;        /* read clears valid */
 
-        /* A saturated window clipped and its S4 is unreliable. Policy:
-         * carry the previous value forward rather than feed a wrong one in.
-         * firmware-arithmetic.md section 5 leaves this open. */
-        if ((st & SICU_ST_SATURATED) && hist_count > 0)
+        /* A saturated window clipped and its S4 is unreliable. Carry the
+         * previous value forward rather than feed a wrong one in -- and if
+         * there is no previous value, drop the window entirely. The SICU's
+         * shift resets to zero, so the FIRST window after power-up always
+         * saturates on a real signal; pushing it would put a wrong sample
+         * into every first inference. Found by tb_system_sicu. */
+        if (st & SICU_ST_SATURATED) {
+            if (hist_count == 0)
+                continue;
             s4 = last;
+        }
         last = s4;
         push_history(s4);
         SYS_S4 = s4;

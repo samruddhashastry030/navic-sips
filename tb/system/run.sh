@@ -35,3 +35,8 @@ echo
 echo "=== 3. REAL accelerator vs reference twin, real weights ==="
 iverilog -g2012 -o sysa.vvp tb_system_accel.sv $SRC "$ROOT/rtl/lstm_accel.sv" 2>/dev/null
 vvp -n sysa.vvp | grep -E "$KEEP"
+
+echo
+echo "=== 4. REAL SICU fed synthetic I/Q + REAL accelerator ==="
+iverilog -g2012 -o syss.vvp tb_system_sicu.sv $SRC "$ROOT/rtl/lstm_accel.sv" "$ROOT/rtl/sicu.sv" 2>/dev/null
+vvp -n syss.vvp | grep -E "$KEEP|window|saturated|worst|  [0-9 ]{3}  "
