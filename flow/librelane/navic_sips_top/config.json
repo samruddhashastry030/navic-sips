@@ -20,7 +20,7 @@
         1800,
         1100
     ],
-    "PL_TARGET_DENSITY_PCT": 35,
+    "PL_TARGET_DENSITY_PCT": 45,
     "MACROS": {
         "sky130_sram_2kbyte_1rw1r_32x512_8": {
             "gds": [
@@ -87,7 +87,11 @@
         "LUT_TANH=\"/home/samruddha730/navic-sips/rtl/weights/lut_tanh.hex\""
     ],
     "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
-    "PL_RESIZER_HOLD_SLACK_MARGIN": 0.5,
-    "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.5,
-    "RUN_MAGIC_DRC": false
+    "PL_RESIZER_HOLD_SLACK_MARGIN": 1.0,
+    "GRT_RESIZER_HOLD_SLACK_MARGIN": 1.0,
+    "RUN_MAGIC_DRC": false,
+    "DESIGN_REPAIR_MAX_SLEW_PCT": 60,
+    "DESIGN_REPAIR_MAX_CAP_PCT": 60,
+    "GRT_DESIGN_REPAIR_MAX_SLEW_PCT": 60,
+    "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 60
 }
