@@ -16,3 +16,11 @@ iverilog -g2012 -o top.vvp tb_top.sv sram_models.sv \
   "$R/spi_master.sv" "$R/uart_tx.sv" "$R/sicu.sv" "$R/lstm_accel.sv" \
   "$R/third_party/picorv32.v" 2>/dev/null
 vvp -n top.vvp | grep -E "===|pass|FAIL|PASS|logits|STATUS =|INDEX|ready pin rose"
+
+echo
+echo "=== weight scrub: a bit goes bad while running ==="
+iverilog -g2012 -o scrub.vvp tb_scrub.sv sram_models.sv \
+  "$R/navic_sips_top.sv" "$R/soc_bus.sv" "$R/navic_sips_regs.sv" \
+  "$R/spi_master.sv" "$R/uart_tx.sv" "$R/sicu.sv" "$R/lstm_accel.sv" \
+  "$R/third_party/picorv32.v" 2>/dev/null
+vvp -n scrub.vvp | grep -E "scrub|cycle .*:|safe loop|restored|unchanged|held|FAIL|PASS"

@@ -47,6 +47,7 @@ static uint16_t hist[HIST_LEN];     /* S4 history, Q4.12 */
 static uint32_t hist_head;          /* index of the OLDEST sample */
 static uint32_t hist_count;
 static int16_t  mu_q88, invsd_q88;  /* normalisation, from weight header */
+static uint32_t csum_ref;           /* checksum of the image as loaded */
 
 /* ------------------------------------------------------------------------ */
 static uint8_t spi_xfer(uint8_t b)
@@ -85,6 +86,7 @@ static int load_weights(void)
 
     if (csum != stored)
         return 0;
+    csum_ref = stored;
 
     /* Read back a spread of words: catches a dead SRAM the SPI path would
      * not, since the checksum was computed on what was SENT, not STORED. */
@@ -93,6 +95,22 @@ static int load_weights(void)
         chk ^= w[i];
     (void)chk;
     return 1;
+}
+
+/* Re-verify the weight SRAM against the checksum taken at load time.
+ *
+ * The boot-time checksum only proves the image ARRIVED intact. Testing showed
+ * a single bit going bad in the SRAM afterwards can be masked entirely -- or
+ * turn a low-confidence DEGRADED into a confident SEVERE -- with nothing to
+ * notice. The CPU is idle over 99.9% of each 10 s window, so it re-reads all
+ * 512 words every window: a few thousand cycles against ~330 million. */
+static int scrub_ok(void)
+{
+    volatile uint32_t *w = (volatile uint32_t *)WSRAM_BASE;
+    uint32_t c = 0;
+    for (uint32_t i = 0; i < WEIGHT_WORDS; i++)
+        c = rotl1(c) ^ w[i];
+    return c == csum_ref;
 }
 
 /* Header: slot 0 = mu, slot 2 = 1/sd, both Q8.8. Slots 0-1 are word 0,
@@ -190,6 +208,26 @@ int main(void)
 
     for (;;) {
         while (!(SICU_STATUS & SICU_ST_VALID)) ;
+
+        /* A corrupted SRAM: stop vouching for results at once -- the host
+         * sees not-ready and safe loop settings -- then reload from flash.
+         * The S4 history is independent of the weights, so it is kept. */
+        if (!scrub_ok()) {
+            /* Safe settings FIRST, then drop ready: a host that reacts to
+             * ready falling must never read the old loop settings. Found by
+             * tb_scrub -- the reverse order exposed SEVERE settings for a
+             * few cycles to a fast host read. */
+            SYS_LOOP   = LOOP_SAFE;
+            SYS_STATUS = 0u;
+            int ok = 0;
+            for (int tries = 0; tries < LOAD_RETRIES && !ok; tries++)
+                ok = load_weights();
+            if (!ok) {
+                SYS_STATUS = SYS_ST_WEIGHTS_FAULT;
+                for (;;) ;
+            }
+            read_header();
+        }
         uint32_t st = SICU_STATUS;
         uint16_t s4 = (uint16_t)SICU_S4;        /* read clears valid */
 
