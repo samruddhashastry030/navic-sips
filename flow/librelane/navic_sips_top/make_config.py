@@ -51,8 +51,8 @@ c["MAGIC_MACRO_STD_CELL_SOURCE"] = "PDK"
 # plus a small margin (defaults 0.1 / 0.05 ns); detailed routing then slows
 # the real clock tree and the cushion is gone. Over-fix instead. Inputs have
 # ~30 ns of setup margin, so the added delay costs nothing there.
-c["PL_RESIZER_HOLD_SLACK_MARGIN"] = 0.5
-c["GRT_RESIZER_HOLD_SLACK_MARGIN"] = 0.5
+c["PL_RESIZER_HOLD_SLACK_MARGIN"] = 0.75
+c["GRT_RESIZER_HOLD_SLACK_MARGIN"] = 0.75
 
 # Magic DRC reports ~8.4 million false positives inside the SKY130 SRAM
 # macros (it does not apply the foundry's SRAM rule exemptions); KLayout DRC
@@ -70,6 +70,6 @@ open(os.path.join(D, "pnr.sdc"), "w").write(
 print("config.json rewritten (old one saved as config.floorplan.json)")
 print("  RTL files      :", len(c["VERILOG_FILES"]))
 print("  clock          : signoff 33 ns, implementation 27 ns")
-print("  hold margin    : 0.5 ns (placement and global routing)")
+print("  hold margin    : 0.75 ns (placement and global routing)")
 print("  Magic DRC      : off (KLayout DRC is authoritative)")
 for p in c["SYNTH_PARAMETERS"]: print("  param          :", p)
