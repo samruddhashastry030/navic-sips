@@ -52,7 +52,14 @@ c["MAGIC_MACRO_STD_CELL_SOURCE"] = "PDK"
 # the real clock tree and the cushion is gone. Over-fix instead. Inputs have
 # ~30 ns of setup margin, so the added delay costs nothing there.
 c["PL_RESIZER_HOLD_SLACK_MARGIN"] = 0.75
-c["GRT_RESIZER_HOLD_SLACK_MARGIN"] = 0.75
+c.pop("GRT_RESIZER_HOLD_SLACK_MARGIN", None)  # post-GRT resizer step is off; value was never used
+c["DESIGN_REPAIR_MAX_SLEW_PCT"] = 60
+c["DESIGN_REPAIR_MAX_CAP_PCT"] = 60
+c["RUN_POST_GRT_DESIGN_REPAIR"] = True       # slew/cap repair after GRT (fixes weak hold buffers)
+c["GRT_DESIGN_REPAIR_MAX_SLEW_PCT"] = 60
+c["GRT_DESIGN_REPAIR_MAX_CAP_PCT"] = 60
+c["RUN_HEURISTIC_DIODE_INSERTION"] = True    # needed for 2 nets at P/R 3.78 and 2.56
+c["DRT_ANTENNA_REPAIR_ITERS"] = 10
 
 # Magic DRC reports ~8.4 million false positives inside the SKY130 SRAM
 # macros (it does not apply the foundry's SRAM rule exemptions); KLayout DRC
