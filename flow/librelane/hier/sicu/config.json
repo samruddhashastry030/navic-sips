@@ -1,0 +1,30 @@
+{
+    "PDK": "sky130A",
+    "CLOCK_PORT": "clk_i",
+    "CLOCK_PERIOD": 33,
+    "PNR_SDC_FILE": "dir::pnr.sdc",
+    "SIGNOFF_SDC_FILE": "dir::base.sdc",
+    "DESIGN_REPAIR_MAX_SLEW_PCT": 60,
+    "DESIGN_REPAIR_MAX_CAP_PCT": 60,
+    "RUN_POST_GRT_DESIGN_REPAIR": true,
+    "GRT_DESIGN_REPAIR_MAX_SLEW_PCT": 60,
+    "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 60,
+    "RUN_HEURISTIC_DIODE_INSERTION": true,
+    "DRT_ANTENNA_REPAIR_ITERS": 10,
+    "DESIGN_NAME": "sicu",
+    "VERILOG_FILES": [
+        "dir::../../../../rtl/sicu.sv"
+    ],
+    "FP_SIZING": "absolute",
+    "DIE_AREA": [
+        0,
+        0,
+        460,
+        400
+    ],
+    "PL_TARGET_DENSITY_PCT": 55,
+    "PDN_MULTILAYER": false,
+    "RT_MAX_LAYER": "met4",
+    "IO_PIN_ORDER_CFG": "dir::pins.cfg",
+    "ERRORS_ON_UNMATCHED_IO": "both"
+}
