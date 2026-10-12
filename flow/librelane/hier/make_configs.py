@@ -58,6 +58,7 @@ for f in ("fw/firmware.hex", "rtl/weights/lut_sigmoid.hex", "rtl/weights/lut_tan
 CLOCK_NS = 33          # signoff
 PNR_NS = 27            # implementation target (same over-constraint as flat)
 IO_BUDGET_NS = 8       # reserved outside each macro, per input and output
+PIN_INPUT_NS = 2.0     # inputs fed straight from chip pins (matches the chip SDC)
 DIE_W, DIE_H = 2000, 1200
 
 # Settings that took the flat chip to clean signoff; reused for every block.
@@ -154,6 +155,9 @@ shift_o.*
 """,
         "instance": "u_sicu",
         "location": (1500, 760),
+        # I/Q come straight from chip pins and feed I^2+Q^2 -> shift -> accumulate
+        # in one cycle: give them the chip SDC's 2 ns, not the 8 ns macro budget.
+        "pin_inputs": ["in_valid_i", "i_i[*]", "q_i[*]"],
     },
 }
 
@@ -205,8 +209,15 @@ for name, m in MACROS.items():
         cfg["SYNTH_PARAMETERS"] = m["params"]
     write(os.path.join(d, "config.json"), json.dumps(cfg, indent=4) + "\n")
     write(os.path.join(d, "pins.cfg"), m["pins"])
-    write(os.path.join(d, "base.sdc"), SDC.format(period="$::env(CLOCK_PERIOD)", io=IO_BUDGET_NS))
-    write(os.path.join(d, "pnr.sdc"), SDC.format(period="%.1f" % PNR_NS, io=IO_BUDGET_NS))
+    extra = ""
+    if m.get("pin_inputs"):
+        extra = ("\n# Inputs driven directly by chip pins: same 2 ns as the chip's own SDC.\n"
+                 "set_input_delay -clock clk_i %.1f [get_ports {%s}]\n"
+                 % (PIN_INPUT_NS, " ".join(m["pin_inputs"])))
+    write(os.path.join(d, "base.sdc"),
+          SDC.format(period="$::env(CLOCK_PERIOD)", io=IO_BUDGET_NS) + extra)
+    write(os.path.join(d, "pnr.sdc"),
+          SDC.format(period="%.1f" % PNR_NS, io=IO_BUDGET_NS) + extra)
     print("macro config :", os.path.relpath(d, ROOT), "%dx%d um" % (w, h))
 
 
