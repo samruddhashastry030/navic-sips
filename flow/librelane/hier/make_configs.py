@@ -101,7 +101,7 @@ mem_wdata_o.*
 mem_rdata_i.*
 """,
         "instance": "u_cpu",
-        "location": (40, 600),
+        "location": (40.48, 598.4),    # on routing grid: x = n*0.92, y = n*13.6
     },
     "acc_core": {
         "files": ["acc_core.sv", "lstm_accel.sv"],
@@ -130,7 +130,7 @@ w_addr_o.*
 w_dout_i.*
 """,
         "instance": "u_acc",
-        "location": (740, 740),
+        "location": (740.6, 734.4),    # on routing grid
     },
     "sicu": {
         "files": ["sicu.sv"],
@@ -154,7 +154,7 @@ saturated_o
 shift_o.*
 """,
         "instance": "u_sicu",
-        "location": (1500, 760),
+        "location": (1499.6, 748.0),   # on routing grid
         # I/Q come straight from chip pins and feed I^2+Q^2 -> shift -> accumulate
         # in one cycle: give them the chip SDC's 2 ns, not the 8 ns macro budget.
         "pin_inputs": ["in_valid_i", "i_i[*]", "q_i[*]"],
