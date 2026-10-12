@@ -94,46 +94,21 @@ module navic_sips_top #(
   // -------------------------------------------------------------------------
   // CPU <-> bus
   // -------------------------------------------------------------------------
-  wire        mem_valid, mem_instr, mem_ready;
+  wire        mem_valid, mem_ready;
   wire [31:0] mem_addr, mem_wdata, mem_rdata;
   wire [ 3:0] mem_wstrb;
 
-  picorv32 #(
-      .ENABLE_MUL        (1),
-      .ENABLE_DIV        (1),
-      .COMPRESSED_ISA    (1),
-      .ENABLE_IRQ        (1),
-      .ENABLE_COUNTERS64 (0),
-      .PROGADDR_RESET    (32'h0000_0000),
-      .PROGADDR_IRQ      (32'h0000_0010)
-  ) u_cpu (
-      .clk          (clk_i),
-      .resetn       (core_rst_n),
-      .trap         (),
-      .mem_valid    (mem_valid),
-      .mem_instr    (mem_instr),
-      .mem_ready    (mem_ready),
-      .mem_addr     (mem_addr),
-      .mem_wdata    (mem_wdata),
-      .mem_wstrb    (mem_wstrb),
-      .mem_rdata    (mem_rdata),
-      .mem_la_read  (),
-      .mem_la_write (),
-      .mem_la_addr  (),
-      .mem_la_wdata (),
-      .mem_la_wstrb (),
-      .pcpi_valid   (),
-      .pcpi_insn    (),
-      .pcpi_rs1     (),
-      .pcpi_rs2     (),
-      .pcpi_wr      (1'b0),
-      .pcpi_rd      (32'd0),
-      .pcpi_wait    (1'b0),
-      .pcpi_ready   (1'b0),
-      .irq          (32'd0),         // firmware polls; see memory-map.md
-      .eoi          (),
-      .trace_valid  (),
-      .trace_data   ()
+  // PicoRV32 RV32IMC, configured inside cpu_core (a hardenable block: see
+  // cpu_core.sv for why the parameters live there).
+  cpu_core u_cpu (
+      .clk_i       (clk_i),
+      .rst_ni      (core_rst_n),
+      .mem_valid_o (mem_valid),
+      .mem_ready_i (mem_ready),
+      .mem_addr_o  (mem_addr),
+      .mem_wdata_o (mem_wdata),
+      .mem_wstrb_o (mem_wstrb),
+      .mem_rdata_i (mem_rdata)
   );
 
   // -------------------------------------------------------------------------
@@ -312,7 +287,13 @@ module navic_sips_top #(
       .shift_o     (sicu_shift)
   );
 
-  lstm_accel #(.LUT_SIG(LUT_SIG), .LUT_TANH(LUT_TANH)) u_acc (
+  // The LUT paths are baked in when acc_core is hardened as a macro, so the
+  // hierarchical chip build (NAVIC_HIER) instantiates it without parameters.
+`ifdef NAVIC_HIER
+  acc_core u_acc (
+`else
+  acc_core #(.LUT_SIG(LUT_SIG), .LUT_TANH(LUT_TANH)) u_acc (
+`endif
       .clk_i       (clk_i),
       .rst_ni      (core_rst_n),
       .start_i     (accel_start),

@@ -8,7 +8,9 @@
         "dir::../../../rtl/uart_tx.sv",
         "dir::../../../rtl/sicu.sv",
         "dir::../../../rtl/lstm_accel.sv",
-        "dir::../../../rtl/third_party/picorv32.v"
+        "dir::../../../rtl/third_party/picorv32.v",
+        "dir::../../../rtl/cpu_core.sv",
+        "dir::../../../rtl/acc_core.sv"
     ],
     "CLOCK_PORT": "clk_i",
     "CLOCK_PERIOD": 33,

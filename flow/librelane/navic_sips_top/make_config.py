@@ -29,7 +29,8 @@ c = json.load(open(cfg_path))
 
 c["VERILOG_FILES"] = ["dir::../../../rtl/" + f for f in [
     "navic_sips_top.sv", "soc_bus.sv", "navic_sips_regs.sv", "spi_master.sv",
-    "uart_tx.sv", "sicu.sv", "lstm_accel.sv", "third_party/picorv32.v"]]
+    "uart_tx.sv", "sicu.sv", "lstm_accel.sv", "third_party/picorv32.v",
+    "cpu_core.sv", "acc_core.sv"]]
 
 for f in ("fw/firmware.hex", "rtl/weights/lut_sigmoid.hex", "rtl/weights/lut_tanh.hex"):
     assert os.path.exists(os.path.join(ROOT, f)), "missing " + f + " -- build it first"
