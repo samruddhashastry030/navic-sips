@@ -11,7 +11,27 @@
 // therefore instantiates acc_core with NO parameters (NAVIC_HIER defined);
 // simulation and the flat build still pass LUT_SIG / LUT_TANH down as before.
 //
-// Behaviour is identical to the lstm_accel instance it replaces.
+// CLOCK GATE. The accelerator works for ~101,000 cycles out of every ~303
+// million (one forecast per 10 s window) but its 1,122 flip-flops used to be
+// clocked on every cycle -- an estimated ~1.6 mW for nothing (see
+// experiments/README.md). It now runs on a gated clock, enabled only while
+// it has something to do:
+//
+//   !rst_ni      the synchronous reset needs clock edges to take effect
+//   start_i      the one-cycle start pulse from soc_bus must be seen
+//   busy_o       any state but S_IDLE (feeding, computing, S_DONE)
+//   out_valid_o  one more edge after S_DONE, so out_valid_o is cleared;
+//                without it out_valid_o would stay high and soc_bus would
+//                re-set accel_done after every read
+//
+// Every input the accelerator reacts to while idle is start_i, so nothing is
+// missed: in_valid_i and w_dout_i only matter in states where busy_o is high.
+//
+// Silicon (SKY130_ICG defined by the LibreLane configs): the PDK's integrated
+// clock-gating cell, a latch plus AND that cannot glitch, which STA and CTS
+// recognise as a clock gate. Simulation: the same latch-and-AND behaviour.
+//
+// Logic behaviour is identical to the ungated block; only idle cycles change.
 // ---------------------------------------------------------------------------
 
 `default_nettype none
@@ -42,8 +62,25 @@ module acc_core #(
     output wire [ 1:0] class_o
 );
 
+  wire clk_en = !rst_ni | start_i | busy_o | out_valid_o;
+  wire gclk;
+
+`ifdef SKY130_ICG
+  (* keep *)
+  sky130_fd_sc_hd__dlclkp_2 u_icg (
+      .CLK  (clk_i),
+      .GATE (clk_en),
+      .GCLK (gclk)
+  );
+`else
+  reg en_latched;
+  always_latch
+    if (!clk_i) en_latched = clk_en;   // transparent while the clock is low
+  assign gclk = clk_i & en_latched;
+`endif
+
   lstm_accel #(.LUT_SIG(LUT_SIG), .LUT_TANH(LUT_TANH)) u_lstm (
-      .clk_i       (clk_i),
+      .clk_i       (gclk),
       .rst_ni      (rst_ni),
       .start_i     (start_i),
       .busy_o      (busy_o),

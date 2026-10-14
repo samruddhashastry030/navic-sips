@@ -32,6 +32,10 @@ c["VERILOG_FILES"] = ["dir::../../../rtl/" + f for f in [
     "uart_tx.sv", "sicu.sv", "lstm_accel.sv", "third_party/picorv32.v",
     "cpu_core.sv", "acc_core.sv"]]
 
+# acc_core.sv: build the accelerator's clock gate from the PDK's
+# integrated clock-gating cell rather than its simulation model.
+c["VERILOG_DEFINES"] = sorted(set(c.get("VERILOG_DEFINES", [])) | {"SKY130_ICG"})
+
 for f in ("fw/firmware.hex", "rtl/weights/lut_sigmoid.hex", "rtl/weights/lut_tanh.hex"):
     assert os.path.exists(os.path.join(ROOT, f)), "missing " + f + " -- build it first"
 c["SYNTH_PARAMETERS"] = [

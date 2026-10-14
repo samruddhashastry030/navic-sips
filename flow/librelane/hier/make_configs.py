@@ -105,6 +105,7 @@ mem_rdata_i.*
     },
     "acc_core": {
         "files": ["acc_core.sv", "lstm_accel.sv"],
+        "defines": ["SKY130_ICG"],     # use the PDK clock-gating cell (acc_core.sv)
         "size": (520, 420),
         "params": [
             'LUT_SIG="%s"' % os.path.join(ROOT, "rtl", "weights", "lut_sigmoid.hex"),
@@ -207,6 +208,8 @@ for name, m in MACROS.items():
     })
     if m["params"]:
         cfg["SYNTH_PARAMETERS"] = m["params"]
+    if m.get("defines"):
+        cfg["VERILOG_DEFINES"] = m["defines"]
     write(os.path.join(d, "config.json"), json.dumps(cfg, indent=4) + "\n")
     write(os.path.join(d, "pins.cfg"), m["pins"])
     extra = ""
