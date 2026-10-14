@@ -146,6 +146,19 @@ static void push_history(uint16_t s4)
 }
 
 /* Run one inference over the ring, oldest sample first. */
+#ifdef SW_LSTM
+/* Comparison build only: the same model computed by the CPU (lstm_sw.c). */
+void lstm_sw(const int16_t *x0, const int16_t *x1,
+             int16_t *l0, int16_t *l1, int16_t *l2);
+int  lstm_sw_acc32_ok(void);
+static void infer(int16_t *l0, int16_t *l1, int16_t *l2)
+{
+    int16_t x[HIST_LEN];
+    for (uint32_t t = 0; t < HIST_LEN; t++)
+        x[t] = normalise(hist[(hist_head + t) % HIST_LEN]);
+    lstm_sw(x, x, l0, l1, l2);
+}
+#else
 static void infer(int16_t *l0, int16_t *l1, int16_t *l2)
 {
     ACCEL_CTRL = 1u;
@@ -161,6 +174,7 @@ static void infer(int16_t *l0, int16_t *l1, int16_t *l2)
     *l1 = (int16_t)(a >> 16);
     *l2 = (int16_t)(b & 0xFFFFu);
 }
+#endif
 
 /* Logit-margin rule, measured at 0.0093 F1 below the softmax threshold. */
 static uint32_t classify(int16_t l0, int16_t l1, int16_t l2, uint32_t *conf)
@@ -201,6 +215,12 @@ int main(void)
         for (;;) ;
     }
     read_header();
+#if defined(SW_LSTM) && defined(LSTM_ACC32)
+    if (!lstm_sw_acc32_ok()) {                  /* image too wide for int32 */
+        SYS_STATUS = SYS_ST_WEIGHTS_FAULT;
+        for (;;) ;
+    }
+#endif
 
     SICU_CTRL = 1u;                             /* start measuring */
 
@@ -253,7 +273,20 @@ int main(void)
 
         int16_t l0, l1, l2;
         uint32_t conf;
+#ifdef MEASURE
+        /* Comparison build only: report the cycles infer() took, and its
+         * logits, to unmapped SYS offsets the bus ignores and the testbench
+         * watches. Never in the shipping image. */
+        uint32_t c0, c1;
+        __asm__ volatile ("rdcycle %0" : "=r"(c0));
         infer(&l0, &l1, &l2);
+        __asm__ volatile ("rdcycle %0" : "=r"(c1));
+        REG32(SYS_BASE + 0x20) = c1 - c0;
+        REG32(SYS_BASE + 0x24) = ((uint32_t)(uint16_t)l1 << 16) | (uint16_t)l0;
+        REG32(SYS_BASE + 0x28) = (uint16_t)l2;
+#else
+        infer(&l0, &l1, &l2);
+#endif
         uint32_t cls = classify(l0, l1, l2, &conf);
 
         /* ORDER MATTERS. Writing SYS_RESULT pulses pred_valid, which latches
