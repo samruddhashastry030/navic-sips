@@ -58,8 +58,14 @@ Four bugs were found this way that no block-level test could have:
 | Clock | 33 ns (~30 MHz) |
 | Setup, worst corner | **+1.76 ns** |
 | Hold, worst corner | **+0.94 ns** |
-| Power | **39.5 uW** |
+| Power | **~36 mW** (tt, default activity; see note) |
 | KLayout DRC / LVS / routing DRC / antenna | **0 / 0 / 0 / 0** |
+
+Power note: the 39.5 uW previously listed here was wrong. The post-route
+report of the hierarchical run (RUN_hier2, 57-openroad-stapostpnr,
+nom_tt_025C_1v80) gives 36.5 mW total: clock tree 4.4 mW, flip-flops 5.0 mW,
+combinational 24.2 mW, macros 2.9 mW, leakage 28 uW. Activity is the tool's
+default, not a real workload; a VCD-driven report will refine it.
 
 Magic DRC reports ~8.4 million violations, all inside the vendor SRAM
 macros: it does not apply the foundry's bitcell rule exemptions. The count

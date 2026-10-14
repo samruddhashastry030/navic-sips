@@ -61,5 +61,7 @@ route the accelerator on ASAP7, for a layout-level check. Untested here.
 
 - Power is a first-order ESTIMATE (`energy_model.py` header lists the
   assumptions). Cycle counts and areas are measured.
-- The flow's reported ~40 uW for the whole chip disagrees with the clock-pin
-  energy in the SKY130 library by ~100x; check with a VCD-driven power report.
+- The ~40 uW quoted earlier for the whole chip was wrong: the flow's own
+  post-route report (RUN_hier2, tt) gives 36.5 mW with default activity,
+  the same milliwatt scale as energy_model.py. A VCD-driven report will
+  pin it down.
