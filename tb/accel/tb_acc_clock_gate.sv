@@ -8,11 +8,22 @@
 //   4. a start pulse wakes it, with no lost first cycle
 //   5. every gated-clock pulse is a full half-period: no glitches
 // Inputs are driven on the falling edge, as from a register on clk.
+//
+// Also runs on the hardened macro's gate-level netlist (tb/gls/acc/run.sh):
+//   GLS       instantiate the netlist, which has no parameters (its LUTs are
+//             baked in at synthesis)
+//   HALF_NS   clock half-period; GLS uses 16.5 for the chip's 33 ns clock
+// and, for power, records switching activity over one window:
+//   +vcd_active  10,000 cycles in the middle of a forecast  -> acc_active.vcd
+//   +vcd_idle    10,000 idle cycles after it                -> acc_idle.vcd
 `timescale 1ns/1ps
 `default_nettype none
+`ifndef HALF_NS
+ `define HALF_NS 5
+`endif
 module tb_acc_clock_gate;
   reg clk = 0, rst_n = 0;
-  always #5 clk = ~clk;
+  always #(`HALF_NS) clk = ~clk;
 
   reg         start = 0, in_valid = 0;
   reg  [15:0] f0 = 0, f1 = 0;
@@ -22,7 +33,11 @@ module tb_acc_clock_gate;
   wire [15:0] l0, l1, l2;
   wire [ 1:0] cls;
 
+`ifdef GLS
+  acc_core dut (
+`else
   acc_core #(.LUT_SIG("lut_sigmoid.hex"), .LUT_TANH("lut_tanh.hex")) dut (
+`endif
     .clk_i(clk), .rst_ni(rst_n), .start_i(start), .busy_o(busy),
     .in_valid_i(in_valid), .in_ready_o(in_ready),
     .in_feat0_i(f0), .in_feat1_i(f1),
@@ -45,7 +60,7 @@ module tb_acc_clock_gate;
   always @(posedge clk) cyc = cyc + 1;
   always @(posedge dut.gclk) begin gedges = gedges + 1; trise = $realtime; end
   always @(negedge dut.gclk)
-    if ($realtime - trise != 5.0) begin
+    if ($realtime - trise < `HALF_NS - 0.01 || $realtime - trise > `HALF_NS + 0.01) begin
       glitches = glitches + 1;
       $display("glitch: gated clock high for %0.3f ns at %0t", $realtime - trise, $time);
     end
@@ -74,6 +89,25 @@ module tb_acc_clock_gate;
     end
   endtask
 
+  // ---- switching activity for power (gate-level runs) ----------------------
+  integer vcd_from = -1;
+  initial begin
+    if ($test$plusargs("vcd_active")) $dumpfile("acc_active.vcd");
+    if ($test$plusargs("vcd_idle"))   $dumpfile("acc_idle.vcd");
+  end
+  task automatic vcd_window;
+    begin
+      $dumpvars(0, dut); $display("       recording activity from cycle %0d", cyc);
+      repeat (10000) @(posedge clk);
+      $dumpoff; $dumpflush; $display("       recorded 10,000 cycles");
+    end
+  endtask
+  initial begin
+    if ($test$plusargs("vcd_active")) begin
+      wait (busy === 1'b1); repeat (40000) @(posedge clk); vcd_window;
+    end
+  end
+
   integer e0, c0;
   initial begin
     repeat (4) @(posedge clk); @(negedge clk) rst_n = 1;
@@ -87,6 +121,7 @@ module tb_acc_clock_gate;
     infer(1);
     $display("       run 1: %0d clock cycles, %0d gated edges", cyc - c0, gedges - e0);
     repeat (2) @(posedge clk);
+    if ($test$plusargs("vcd_idle")) vcd_window;
     e0 = gedges; repeat (5000) @(posedge clk);
     chk("gated clock stopped after the result, 5000 idle cycles", gedges == e0);
     chk("out_valid_o cleared before the clock stopped", out_valid === 1'b0);
@@ -99,6 +134,6 @@ module tb_acc_clock_gate;
     else             $display("FAIL: accelerator clock gate, %0d errors", errors);
     $finish;
   end
-  initial begin #20_000_000; $display("FAIL: timeout"); $finish; end
+  initial begin wait (cyc == 400000); $display("FAIL: timeout"); $finish; end
 endmodule
 `default_nettype wire

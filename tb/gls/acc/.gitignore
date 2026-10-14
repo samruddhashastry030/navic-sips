@@ -1,0 +1,4 @@
+*.hex
+*.vvp
+*.vcd
+*.tcl
