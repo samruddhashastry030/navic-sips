@@ -10,7 +10,8 @@
 # with the SKY130 cell models, at the chip's 33 ns clock. Cells get a unit
 # delay of 0.1 ns, so this checks FUNCTION on the real netlist (including the
 # clock-gating cell and the clock tree) -- timing is STA's job.
-# The power step needs `openroad` (inside the LibreLane nix-shell).
+# The power step needs `openroad` (inside the LibreLane nix-shell). It reads the
+# macro's final .odb (OpenROAD needs the technology, which the .odb carries).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../../.." && pwd)"
 RUN=${RUN:-RUN_macro}
@@ -59,13 +60,13 @@ LIB="$HD/lib/sky130_fd_sc_hd__tt_025C_1v80.lib"
 for w in active idle; do
   cat > power_$w.tcl <<TCL
 read_liberty $LIB
-read_verilog $NL
-link_design acc_core
+read_db $FINAL/odb/acc_core.odb
 read_sdc $SDC
 $( [ -n "$SPEF" ] && echo "read_spef $SPEF" )
 read_vcd -scope tb_acc_clock_gate/dut acc_$w.vcd
 report_power
 TCL
   echo "=== power, $w window (tt, 33 ns clock, recorded activity)"
-  openroad -exit power_$w.tcl 2>&1 | awk '/^Group/{p=1} p{print} p&&/^Total/{getline; print; p=0}'
+  openroad -exit power_$w.tcl > power_$w.log 2>&1 || { echo "openroad failed:"; tail -20 power_$w.log; exit 1; }
+  awk '/^Group/{p=1} p{print} p&&/^Total/{getline; print; p=0}' power_$w.log
 done
