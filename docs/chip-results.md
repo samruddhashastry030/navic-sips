@@ -15,7 +15,10 @@ them, measures scintillation, runs the trained model, and publishes **SEVERE
 with confidence 9** to the host — raising the interrupt line, which the host
 clears with a register write. Both fail-safes force safe outputs.
 
-The same design passes SKY130 signoff with timing closed at every corner.
+The same design passes SKY130 signoff with timing closed at every corner,
+and the laid-out netlist behaves exactly like the RTL: the same pin-level
+test, run at gate level on the final layout (RUN_hier4), publishes the same
+logits, class and confidence.
 
 ---
 
@@ -30,6 +33,14 @@ PicoRV32 from a boot ROM.
 | `tb_soc_bus` | 46 checks on the system bus and all eight targets |
 | System tests (6) | Firmware boots, loads weights, infers, publishes |
 | `tb_top` | The whole chip through its pins only, as the receiver sees it |
+| `tb_scrub` | A weight bit corrupted while running is detected and repaired |
+| `tb/top/run_config.sh` | The firmware takes its margin, confidence scale and loop codes from the flash image |
+| `tb/accel` | The accelerator's clock gate: golden results, clock stops when idle, no glitches |
+| Gate-level, accelerator (`tb/gls/acc`) | The hardened accelerator netlist, clock tree and gate cell included |
+| Gate-level, whole chip (`tb/gls/chip`) | `tb_top` on the final layout netlists: same results as RTL (78 min) |
+
+The older `tb/system` suite predates the hierarchical build and currently
+fails (tests 1, 3, 4, 5); `tb/top` is the maintained chip-level suite.
 
 **Every test was shown to fail when the design is broken**, not merely to
 pass. Deliberate faults — a wrong weight bit, a swapped lookup table, a
@@ -50,19 +61,28 @@ Four bugs were found this way that no block-level test could have:
 
 ## 3. Physical signoff (SKY130, LibreLane)
 
+Hierarchical build: CPU, LSTM accelerator and SICU hardened as macros,
+placed with the two SRAMs on the chip top. Current run: RUN_hier4.
+
 | | |
 |---|---|
-| Die | 1800 x 1100 um (1.98 mm2) |
-| Standard cells | 64,183 (35.1% utilisation) |
-| SRAM macros | 475,251 um2 — 2 KB weights, 1 KB data |
+| Die | 2000 x 1200 um (2.4 mm2) |
+| Macros | cpu_core 640x560, acc_core 520x420, sicu 460x400 um; SRAMs 2 KB weights, 1 KB data |
 | Clock | 33 ns (~30 MHz) |
-| Setup, worst corner | **+1.76 ns** |
-| Hold, worst corner | **+0.94 ns** |
+| Setup, worst corner | **+3.32 ns** |
+| Hold, worst corner | **+0.096 ns** |
 | Power | **~36 mW** (tt, default activity; see note) |
-| KLayout DRC / LVS / routing DRC / antenna | **0 / 0 / 0 / 0** |
+| KLayout DRC / LVS / antenna | **0 / 0 / 0** |
+| Max-slew / max-cap warnings | 98 / 21 (not signoff errors) |
+
+**Accelerator power, measured.** From switching activity recorded in a
+gate-level simulation of the hardened accelerator (tb/gls/acc, OpenSTA,
+tt): **3.28 mW while computing, 66 uW idle** with its clock gated. A
+forecast takes 3.3 ms, about **11 uJ**. Of the idle 66 uW, nearly all is
+eight clock buffers ahead of the gate cell (~7 uW each).
 
 Power note: the 39.5 uW previously listed here was wrong. The post-route
-report of the hierarchical run (RUN_hier2, 57-openroad-stapostpnr,
+report of the earlier hierarchical run (RUN_hier2, 57-openroad-stapostpnr,
 nom_tt_025C_1v80) gives 36.5 mW total: clock tree 4.4 mW, flip-flops 5.0 mW,
 combinational 24.2 mW, macros 2.9 mW, leakage 28 uW. Activity is the tool's
 default, not a real workload; a VCD-driven report will refine it.
@@ -73,9 +93,9 @@ is the same with stub logic as with the full chip, KLayout reports zero on
 the same layout, and LVS is clean. **If the shuttle's precheck requires
 Magic DRC, this needs a waiver** — worth asking about early.
 
-Remaining: 1,128 max-slew and 149 max-cap warnings, down from 4,528 and 320.
-Not signoff errors, but they mean the timing numbers carry more uncertainty
-than the slack figures suggest. The cause is understood — see section 5.
+Remaining: 98 max-slew and 21 max-cap warnings on the chip top (the flat
+build had 1,128 and 149). Not signoff errors, but they mean the timing
+numbers carry more uncertainty than the slack figures suggest.
 
 ---
 
@@ -88,6 +108,12 @@ bands. The shipping model uses S4 on L1 only.
 **No CORDIC.** It existed for a square root the SICU now does internally,
 and for a phase arctangent serving sigma-phi — a feature we cannot validate
 and do not use. Both dropped.
+
+**Keep the accelerator, clock-gated.** Software on the CPU computes the same
+logits bit for bit in 3.3 million cycles (109 ms of each 10 s), so the
+accelerator is not needed for speed. It is kept for energy: 101,100 cycles
+per forecast, and with a clock gate (one sky130_fd_sc_hd__dlclkp_2) it
+idles at 66 uW instead of an estimated ~2.5 mW. See experiments/README.md.
 
 **Chip clock 33 ns (~30 MHz).** Nothing is throughput-bound: the SICU
 produces one result per 10 s, inference takes 3 ms. Every block closes at
@@ -105,10 +131,14 @@ updatable in flash; the code that loads them is not.
 
 ## 5. What is left
 
-**The floorplan.** The die was sized during an early experiment with stub
-logic and is about 79% empty. That is what makes the wires long and produces
-the remaining slew warnings. Shrinking it around the macros would improve
-signal quality, power and area at once. This is the main physical task left.
+**Shuttle integration.** Pads or the shuttle's wrapper, its pin positions,
+power entry and precheck rules (including the Magic DRC waiver for the
+SRAMs). This is the main physical task left, and it depends on which
+shuttle the chip goes on.
+
+**CPU sleep.** The CPU busy-waits through each 10 s window. Letting it
+sleep between S4 scores, with its clock gated, is the largest power saving
+left.
 
 **Interface specifications not yet agreed with the receiver side:**
 
@@ -118,7 +148,8 @@ signal quality, power and area at once. This is the main physical task left.
 - the **loop-setting codes** — the firmware writes a 3-bit PLL bandwidth
   code, but nothing defines what each code means in hertz. The KPI
   experiment gives the values we want (5 / 15 / 50 Hz); the mapping to codes
-  is an interface decision.
+  is an interface decision. The codes now live in the flash image, so this
+  can be settled after tape-out.
 
 **Operating point.** Recall is a dial. The model currently catches 60% of
 severe events at 58% precision; tuned for recall it catches **72% at 44%**.
