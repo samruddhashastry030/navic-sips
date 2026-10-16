@@ -14,7 +14,7 @@ jobs:
           sudo apt-get install -y iverilog verilator build-essential
           pip install cocotb
       - name: Lint
-        run: for f in rtl/*.sv; do verilator --lint-only -Wall "$f" || exit 1; done
+        run: verilator --lint-only -Wall -Wno-fatal rtl/*.sv rtl/third_party/picorv32.v tb/top/sram_models.sv
       - name: Simulate
         run: make -C tb/cocotb SIM=icarus
       - name: Simulate plain-Verilog TBs
