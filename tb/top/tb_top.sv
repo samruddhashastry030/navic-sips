@@ -28,6 +28,13 @@
 `ifndef CFG_LOOP2
  `define CFG_LOOP2 32'h01B
 `endif
+// Gate-level runs (tb/gls/chip/run.sh): GLS instantiates the layout netlist,
+// which has no parameters, and replaces the three looks inside the chip with
+// the values an RTL run recorded (GLS_L0/L1/L2 logits, GLS_S4 report);
+// HALF_NS sets the clock (16.5 = the chip's 33 ns).
+`ifndef HALF_NS
+ `define HALF_NS 5
+`endif
 module tb_top;
   localparam GAP = 8;                           // cycles between I/Q samples
   // navic_sips_regs register map
@@ -36,7 +43,7 @@ module tb_top;
                    A_IRQEN = 5'h18;
 
   reg clk = 0, rst_n = 0;
-  always #5 clk = ~clk;
+  always #(`HALF_NS) clk = ~clk;
 
   // ---- pins -----------------------------------------------------------------
   reg         bus_sel = 0, bus_we = 0;
@@ -50,8 +57,12 @@ module tb_top;
   reg         bypass_pin = 0;
   wire        irq, ready_pin, fault_pin, uart_tx;
 
+`ifdef GLS
+  navic_sips_top dut (
+`else
   navic_sips_top #(.FW_HEX("firmware.hex"), .LUT_SIG("lut_sigmoid.hex"),
                    .LUT_TANH("lut_tanh.hex")) dut (
+`endif
     .clk_i(clk), .rst_ni(rst_n),
     .bus_sel_i(bus_sel), .bus_we_i(bus_we), .bus_addr_i(bus_addr),
     .bus_wdata_i(bus_wdata), .bus_rdata_o(bus_rdata), .bus_ack_o(bus_ack),
@@ -148,8 +159,13 @@ module tb_top;
   task automatic expected_result;
     integer l0, l1, l2, ru, m;
     begin
+`ifdef GLS
+      l0 = `GLS_L0; l1 = `GLS_L1; l2 = `GLS_L2;      // recorded by the RTL run
+`else
       l0 = $signed(dut.accel_logit0); l1 = $signed(dut.accel_logit1);
       l2 = $signed(dut.accel_logit2);
+      $display("       REF logits %0d %0d %0d s4 %0d", l0, l1, l2, dut.s4_report);
+`endif
       ru = (l0 > l1) ? l0 : l1;
       if (l2 - ru >= `CFG_MARGIN) begin e_cls = 2; m = l2 - ru; end
       else if (l1 > l0) begin e_cls = 1; m = l1 - ((l0 > l2) ? l0 : l2); end
@@ -201,8 +217,13 @@ module tb_top;
     chk("STATUS: confidence", st[6:3], e_conf);
     hrd(A_INDEX, v);
     $display("       INDEX S4 = %0.4f  (SICU's last S4 %0.4f)",
+`ifdef GLS
+             v[15:0] / 4096.0, 0.0);
+    chk("INDEX: host S4 = the RTL run's", v[15:0], `GLS_S4);
+`else
              v[15:0] / 4096.0, dut.sicu_s4 / 4096.0);
     chk("INDEX: host S4 = what the firmware reported", v[15:0], dut.s4_report);
+`endif
     chk("INDEX: host S4 is non-zero", v[15:0] != 0, 1);
     hrd(A_LOOPCFG, v);  chk("LOOPCFG: settings for that class", v, loop_for(e_cls));
     hrd(A_IRQST, v);
@@ -246,6 +267,6 @@ module tb_top;
     $finish;
   end
 
-  initial begin #60_000_000; $display("FAIL: timeout, %0d windows", n_win); $finish; end
+  initial begin wait (cyc == 6_000_000); $display("FAIL: timeout, %0d windows", n_win); $finish; end
 endmodule
 `default_nettype wire
