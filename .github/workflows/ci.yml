@@ -26,5 +26,5 @@ jobs:
           iverilog -g2012 -o /tmp/spi.vvp rtl/spi_master.sv tb/tb_spi_master.sv
           vvp /tmp/spi.vvp | tee /tmp/spi.log
           grep -q "^PASS" /tmp/spi.log
-       - name: Accelerator clock-gate test
+      - name: Accelerator clock-gate test
         run: bash tb/accel/run.sh
