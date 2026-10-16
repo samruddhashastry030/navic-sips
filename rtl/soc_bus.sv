@@ -7,7 +7,7 @@
 // change here must be mirrored there.
 //
 //   addr[31:28]   target
-//   0x0           boot ROM, 1 KB, loaded from firmware.hex
+//   0x0           boot ROM, 2 KB, loaded from firmware.hex
 //   0x1           data RAM  = event SRAM port 0
 //   0x2           weight SRAM port 0
 //   0x3           system register block -> drives navic_sips_regs inputs
@@ -50,7 +50,7 @@
 
 module soc_bus #(
     parameter              FW_HEX    = "fw/firmware.hex",
-    parameter int unsigned ROM_WORDS = 256                   // 1 KB
+    parameter int unsigned ROM_WORDS = 512                   // 2 KB
 ) (
     input  wire         clk_i,
     input  wire         rst_ni,

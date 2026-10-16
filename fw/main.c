@@ -20,9 +20,26 @@
 #define FLASH_CSUM_ADDR 0x000800u    /* checksum word follows the image */
 #define LOAD_RETRIES    3
 
+/* ---- tunables: from the flash image, these values only as fallback -----
+ * The ROM is fixed at tape-out; the weight image in flash is not. So the
+ * values that belong to a trained model or to the receiver interface live
+ * in a config block in the image's padding (rtl/weights/WEIGHT_FORMAT.md):
+ *
+ *   slot 992  tag 0xC0F1        slot 995  confidence shift
+ *   slot 993  version 1         slot 996-998  loop settings, class 0..2
+ *   slot 994  SEVERE margin, Q8.8
+ *
+ * An image without the tag (an older export) runs on the defaults below,
+ * which are the values the shipping model was tuned with. A config block is
+ * read only from a verified image, so it cannot mix with a bad one. The block is
+ * covered by the image checksum and the scrub like every other word. */
+#define CFG_SLOT        992u
+#define CFG_TAG         0xC0F1u
+#define CFG_VERSION     1u
+
 /* SEVERE decision: logit_severe must beat the runner-up by this margin.
  * 0.25 in Q8.8 = 64. Derived by python/ml/derive_margin.py for the shipping
- * L1-only model; re-derive whenever the model is retrained. */
+ * L1-only model; re-derived, and re-exported, whenever the model is. */
 #define SEVERE_MARGIN_Q88   64
 
 /* Confidence: 4 bits, one step per 0.25 of logit margin (Q8.8 64), so full
@@ -36,13 +53,15 @@
  * agreed with whoever owns the receiver interface, these are placeholders.
  * SEVERE is the measured row (66% -> 98.4% lock at 50 Hz); the FLL and T_coh
  * entries are not backed by measurement. */
-static const uint16_t loop_table[3] = {
+static uint16_t loop_table[3] = {    /* defaults; read_config may replace */
     /* NOMINAL  */ LOOP(0u, 0u, 2u, 0u),
     /* DEGRADED */ LOOP(1u, 0u, 2u, 0u),
     /* SEVERE   */ LOOP(3u, 1u, 1u, 0u),
 };
 
 /* ---- state, all in data RAM ------------------------------------------- */
+static int32_t  severe_margin = SEVERE_MARGIN_Q88;   /* Q8.8 */
+static uint32_t conf_shift    = CONF_SHIFT;
 static uint16_t hist[HIST_LEN];     /* S4 history, Q4.12 */
 static uint32_t hist_head;          /* index of the OLDEST sample */
 static uint32_t hist_count;
@@ -123,6 +142,22 @@ static void read_header(void)
     invsd_q88 = (int16_t)(w[1] & 0xFFFFu);
 }
 
+/* Tunables from the image's config block, if it has one (else the defaults
+ * above stay). Read as words -- the ROM is 1 KB -- and masked to each field's
+ * width, so a corrupt value cannot reach the registers out of range. */
+static void read_config(void)
+{
+    volatile const uint32_t *w = (volatile const uint32_t *)WSRAM_BASE + CFG_SLOT / 2;
+    if (w[0] != ((CFG_VERSION << 16) | CFG_TAG))
+        return;
+    uint32_t a = w[1], b = w[2], c = w[3];
+    severe_margin = (int16_t)a;                 /* slot 994 */
+    conf_shift    = (a >> 16) & 15u;            /* slot 995 */
+    loop_table[0] = b & 0x1FFu;                 /* slots 996-998 */
+    loop_table[1] = (b >> 16) & 0x1FFu;
+    loop_table[2] = c & 0x1FFu;
+}
+
 /* (s4 - mu) * inv_sd, Q4.12 in, Q8.8 out. firmware-arithmetic.md section 1. */
 static int16_t normalise(uint16_t s4_q412)
 {
@@ -183,14 +218,14 @@ static uint32_t classify(int16_t l0, int16_t l1, int16_t l2, uint32_t *conf)
     uint32_t cls;
 
     int16_t runner = (l0 > l1) ? l0 : l1;
-    if ((int32_t)l2 - (int32_t)runner >= SEVERE_MARGIN_Q88) {
+    if ((int32_t)l2 - (int32_t)runner >= severe_margin) {
         cls = 2; best = l2; second = runner;
     } else if (l1 > l0) {
         cls = 1; best = l1; second = (l0 > l2) ? l0 : l2;
     } else {
         cls = 0; best = l0; second = (l1 > l2) ? l1 : l2;
     }
-    int32_t c = (best - second) >> CONF_SHIFT;
+    int32_t c = (best - second) >> conf_shift;
     if (c > 15) c = 15;
     if (c < 0)  c = 0;
     *conf = (uint32_t)c;
@@ -215,6 +250,7 @@ int main(void)
         for (;;) ;
     }
     read_header();
+    read_config();
 #if defined(SW_LSTM) && defined(LSTM_ACC32)
     if (!lstm_sw_acc32_ok()) {                  /* image too wide for int32 */
         SYS_STATUS = SYS_ST_WEIGHTS_FAULT;
@@ -247,6 +283,7 @@ int main(void)
                 for (;;) ;
             }
             read_header();
+            read_config();
         }
         uint32_t st = SICU_STATUS;
         uint16_t s4 = (uint16_t)SICU_S4;        /* read clears valid */

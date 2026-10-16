@@ -10,6 +10,24 @@
 // without it, the host reads class 0 and never sees an interrupt.
 `timescale 1ns/1ps
 `default_nettype none
+// Firmware tunables the flash image's config block sets (python/ml/
+// config_block.py); defaults are the shipping values. tb/top/run_config.sh
+// overrides them to prove the firmware reads the block.
+`ifndef CFG_MARGIN
+ `define CFG_MARGIN 64
+`endif
+`ifndef CFG_SHIFT
+ `define CFG_SHIFT 6
+`endif
+`ifndef CFG_LOOP0
+ `define CFG_LOOP0 32'h020
+`endif
+`ifndef CFG_LOOP1
+ `define CFG_LOOP1 32'h021
+`endif
+`ifndef CFG_LOOP2
+ `define CFG_LOOP2 32'h01B
+`endif
 module tb_top;
   localparam GAP = 8;                           // cycles between I/Q samples
   // navic_sips_regs register map
@@ -133,21 +151,21 @@ module tb_top;
       l0 = $signed(dut.accel_logit0); l1 = $signed(dut.accel_logit1);
       l2 = $signed(dut.accel_logit2);
       ru = (l0 > l1) ? l0 : l1;
-      if (l2 - ru >= 64) begin e_cls = 2; m = l2 - ru; end
+      if (l2 - ru >= `CFG_MARGIN) begin e_cls = 2; m = l2 - ru; end
       else if (l1 > l0) begin e_cls = 1; m = l1 - ((l0 > l2) ? l0 : l2); end
       else begin e_cls = 0; m = l0 - ((l1 > l2) ? l1 : l2); end
-      e_conf = m >>> 6; if (e_conf > 15) e_conf = 15; if (e_conf < 0) e_conf = 0;
+      e_conf = m >>> `CFG_SHIFT; if (e_conf > 15) e_conf = 15; if (e_conf < 0) e_conf = 0;
       $display("       accelerator logits %0d %0d %0d -> class %0d, conf %0d",
                l0, l1, l2, e_cls, e_conf);
     end
   endtask
 
-  // loop_table in fw/main.c, packed [2:0] pll [3] fll [6:4] tcoh [8:7] band
+  // loop settings per class, packed [2:0] pll [3] fll [6:4] tcoh [8:7] band
   function automatic [31:0] loop_for(input integer c);
     case (c)
-      0: loop_for = 32'h020;   // LOOP(0,0,2,0)
-      1: loop_for = 32'h021;   // LOOP(1,0,2,0)
-      default: loop_for = 32'h01B;   // LOOP(3,1,1,0)
+      0: loop_for = `CFG_LOOP0;      // default LOOP(0,0,2,0)
+      1: loop_for = `CFG_LOOP1;      // default LOOP(1,0,2,0)
+      default: loop_for = `CFG_LOOP2;   // default LOOP(3,1,1,0)
     endcase
   endfunction
   localparam [31:0] LOOP_SAFE = 32'h033;   // PLL 3, FLL 0, T_coh 3, band 0

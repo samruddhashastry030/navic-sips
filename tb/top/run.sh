@@ -25,4 +25,4 @@ iverilog -g2012 -o scrub.vvp tb_scrub.sv sram_models.sv \
   "$R/spi_master.sv" "$R/uart_tx.sv" "$R/sicu.sv" "$R/lstm_accel.sv" \
   "$R/cpu_core.sv" "$R/acc_core.sv" \
   "$R/third_party/picorv32.v" 2>/dev/null
-vvp -n scrub.vvp | grep -E "scrub|cycle .*:|safe loop|restored|unchanged|held|FAIL|PASS"
+vvp -n scrub.vvp | grep -E "scrub|cycle .*:|safe loop|restored|unchanged|after recovery|held|FAIL|PASS"

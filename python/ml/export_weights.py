@@ -30,6 +30,8 @@ import os
 import numpy as np
 import torch
 
+import config_block
+
 FRAC_BITS = 8
 WORD_BITS = 16
 SRAM_WORDS = 512          # 32-bit words
@@ -168,6 +170,9 @@ def main():
     ap.add_argument("--vectors", type=int, default=64)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--allow-oversize", action="store_true")
+    ap.add_argument("--margin", type=float, default=config_block.DEFAULT_MARGIN,
+                    help="SEVERE logit margin (re-run derive_margin.py after retraining)")
+    ap.add_argument("--conf-shift", type=int, default=config_block.DEFAULT_CONF_SHIFT)
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -210,6 +215,14 @@ def main():
 
     pad = max(0, SRAM_SLOTS - used)
     slots = np.concatenate([slots, np.zeros(pad, dtype=np.int32)])
+    if used <= config_block.CFG_SLOT:
+        config_block.apply(slots, margin=args.margin, conf_shift=args.conf_shift)
+        print("firmware config block at slots %d-%d (margin %.3f, conf shift %d)"
+              % (config_block.CFG_SLOT, config_block.CFG_SLOT + config_block.CFG_SLOTS - 1,
+                 args.margin, args.conf_shift))
+    else:
+        print("  WARNING: no room for the firmware config block; the firmware "
+              "will use its built-in defaults")
 
     words = write_words32(os.path.join(args.out, "weights.hex"),
                           os.path.join(args.out, "weights.bin"), slots)
@@ -259,7 +272,20 @@ def main():
             f.write("| %d-%d | %s %s |\n"
                     % (5 + m["start"], 5 + m["start"] + m["count"] - 1,
                        m["name"], "x".join(str(s) for s in m["shape"])))
-        f.write("| %d-%d | zero padding |\n\n" % (used, SRAM_SLOTS - 1))
+        c0, c1 = config_block.CFG_SLOT, config_block.CFG_SLOT + config_block.CFG_SLOTS
+        if used <= c0:
+            if used < c0:
+                f.write("| %d-%d | zero padding |\n" % (used, c0 - 1))
+            f.write("| %d | firmware config tag 0x%04X |\n" % (c0, config_block.CFG_TAG))
+            f.write("| %d | config version %d |\n" % (c0 + 1, config_block.CFG_VERSION))
+            f.write("| %d | SEVERE logit margin, Q8.8 |\n" % (c0 + 2))
+            f.write("| %d | confidence shift |\n" % (c0 + 3))
+            f.write("| %d-%d | loop settings for NOMINAL, DEGRADED, SEVERE |\n" % (c0 + 4, c1 - 1))
+            f.write("| %d-%d | zero padding |\n\n" % (c1, SRAM_SLOTS - 1))
+            f.write("The config block (python/ml/config_block.py) holds firmware "
+                    "tunables that can change with the weights after tape-out.\n\n")
+        else:
+            f.write("| %d-%d | zero padding |\n\n" % (used, SRAM_SLOTS - 1))
         f.write("Tensors are flattened row-major. LSTM gate order inside the "
                 "4H rows is PyTorch's: input, forget, cell, output.\n\n")
         f.write("## Gate LUTs\n\n")

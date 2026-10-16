@@ -93,9 +93,13 @@ and do not use. Both dropped.
 produces one result per 10 s, inference takes 3 ms. Every block closes at
 this clock at every corner.
 
-**Firmware in ROM.** 840 bytes, synthesised into silicon. It cannot be
-changed after tape-out. The weights remain updatable in external flash; the
-code that loads them does not.
+**Firmware in ROM.** 1,120 bytes in a 2 KB ROM, synthesised into silicon.
+It cannot be changed after tape-out. What a retrained model or the receiver
+interface may need to change -- the SEVERE decision margin, the confidence
+scale and the loop-setting codes -- comes from a config block in the flash
+image (rtl/weights/WEIGHT_FORMAT.md, python/ml/config_block.py), with the
+shipping values as built-in fallbacks. The weights and that block are
+updatable in flash; the code that loads them is not.
 
 ---
 

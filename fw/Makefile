@@ -25,7 +25,7 @@ firmware.bin: firmware.elf
 # One 32-bit little-endian word per line, for $readmemh into the ROM.
 # Padded to the full ROM so no word is left uninitialised; the build fails
 # if the firmware outgrows the ROM rather than silently truncating it.
-ROM_BYTES ?= 1024
+ROM_BYTES ?= 2048
 firmware.hex: firmware.bin
 	python3 -c "import sys; d=open('$<','rb').read(); n=$(ROM_BYTES); \
 sys.exit('firmware is %d bytes, ROM is %d' % (len(d), n)) if len(d) > n else None; \

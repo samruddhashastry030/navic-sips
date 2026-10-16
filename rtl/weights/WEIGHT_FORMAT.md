@@ -25,7 +25,14 @@ Two values per 32-bit SRAM word: even slot index in bits [15:0], odd in bits [31
 | 933-964 | lstm.bias_hh_l1 32 |
 | 965-988 | head.weight 3x8 |
 | 989-991 | head.bias 3 |
-| 992-1023 | zero padding |
+| 992 | firmware config tag 0xC0F1 |
+| 993 | config version 1 |
+| 994 | SEVERE logit margin, Q8.8 |
+| 995 | confidence shift |
+| 996-998 | loop settings for NOMINAL, DEGRADED, SEVERE |
+| 999-1023 | zero padding |
+
+The config block (python/ml/config_block.py) holds firmware tunables that can change with the weights after tape-out.
 
 Tensors are flattened row-major. LSTM gate order inside the 4H rows is PyTorch's: input, forget, cell, output.
 

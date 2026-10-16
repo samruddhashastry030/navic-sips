@@ -98,6 +98,13 @@ It is firmware, so it stays tunable.
 
 ---
 
+> **Where these constants live.** The SEVERE margin (section 3), the
+> confidence shift (section 2) and the loop table (section 4) are read at boot
+> from the config block in the flash image (slots 992-998, see
+> rtl/weights/WEIGHT_FORMAT.md); the values in this document are the
+> defaults, used when an image has no block. Retraining = re-export with
+> `--margin` from derive_margin.py, no ROM change.
+
 ## 3. Threshold application
 
 Weight slot 4 holds the SEVERE decision threshold as Q8.8 — 0.512 for the

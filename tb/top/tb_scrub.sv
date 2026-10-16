@@ -227,7 +227,13 @@ module tb_scrub;
       repeat (4) @(posedge clk);
       hrd(A_STATUS, v);
       chk("class unchanged after recovery", v[1:0], cls0);
-      chk("confidence unchanged after recovery", v[6:3], conf0);
+      // Confidence is NOT compared with conf0: the stimulus is noisy and the
+      // S4 history has moved on by ~100 windows, so it legitimately varies
+      // by a step. What must hold is that the published result is the margin
+      // rule applied to the logits computed with the restored weights.
+      expected_result;
+      chk("class from the margin rule, after recovery", v[1:0], e_cls);
+      chk("confidence from the margin rule, after recovery", v[6:3], e_conf);
     end
     $display("");
     if (errors == 0) $display("PASS: weight scrub detects and recovers at the pins");
